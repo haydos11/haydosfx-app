@@ -1,18 +1,21 @@
 "use client";
 import dynamic from "next/dynamic";
 import Header from "../components/Header";
-import { useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
+type CotRow = { name: string; long: number; short: number };
+
 export default function COTPage() {
-  const data = useMemo(() => ([
-    { name: "AUD (A6)", long: 80, short: 20 },
-    { name: "EUR (E6)", long: 46, short: 54 },
-    { name: "GBP (B6)", long: 51, short: 49 },
-    { name: "JPY (J6)", long: 39, short: 61 },
-    { name: "CAD (D6)", long: 55, short: 45 },
-  ]), []);
+  const [data, setData] = useState<CotRow[]>([]);
+
+  useEffect(() => {
+    fetch("/api/cot")
+      .then(res => res.json())
+      .then(setData)
+      .catch(() => setData([]));
+  }, []);
 
   const option = useMemo(() => ({
     backgroundColor: "transparent",
@@ -32,10 +35,8 @@ export default function COTPage() {
       <Header />
       <div className="mx-auto max-w-6xl px-4 py-6">
         <div className="mb-6 flex items-center justify-between">
-          <h1 className="text-xl font-semibold">COT Dashboard (Preview)</h1>
-          <span className="text-xs text-neutral-400">
-            Placeholder data. Live CFTC feed coming.
-          </span>
+          <h1 className="text-xl font-semibold">COT Dashboard (Live Data)</h1>
+          <span className="text-xs text-neutral-400">Pulled from CFTC Socrata API</span>
         </div>
         <div className="rounded-lg border border-neutral-800 p-4">
           <ReactECharts option={option} style={{ height: 380, width: "100%" }} />
