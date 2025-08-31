@@ -20,13 +20,13 @@ export default function COTPage() {
         const res = await fetch("/api/cot", { cache: "no-store" });
         const json = await res.json();
         if (!res.ok) {
-          setErr(json?.error || "Failed to load COT");
+          setErr((json && json.error) || "Failed to load COT");
           setRows([]);
           return;
         }
         setRows(Array.isArray(json) ? json : []);
-      } catch (e: any) {
-        setErr(e?.message || "Network error");
+      } catch (e: unknown) {
+        setErr(e instanceof Error ? e.message : "Network error");
         setRows([]);
       } finally {
         setLoading(false);
