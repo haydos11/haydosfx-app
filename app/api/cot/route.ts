@@ -1,53 +1,57 @@
-// app/api/cot/route.ts
 import { NextResponse } from "next/server";
 
 /**
- * Pulls latest COT (Disaggregated Futures & Options Combined) from the CFTC Socrata API
- * and returns [{ name, long, short }] with percentages for major FX futures.
- *
- * Notes:
- * - We select only the fields we need and order by report_date_long DESC (latest first)
- * - We then pick the first row for each market keyword
+ * Robust COT fetch:
+ * - avoids SoQL select/order to prevent 400s
+ * - finds the latest report date client-side
+ * - returns [{ name, long, short }] as percentages for major FX CME contracts
  */
 export async function GET() {
-  // Socrata: Disaggregated Futures and Options Combined
-  // Fields we care about:
-  // - market_and_exchange_names (e.g., "Australian Dollar - Chicago Mercantile Exchange")
-  // - report_date_long (YYYY-MM-DD)
-  // - noncomm_positions_long_all
-  // - noncomm_positions_short_all
-  const url =
-    "https://publicreporting.cftc.gov/resource/6dca-aqww.json" +
-    "?$select=market_and_exchange_names,report_date_long,noncomm_positions_long_all,noncomm_positions_short_all" +
-    "&$order=report_date_long%20DESC" +
-    "&$limit=2000";
+  const url = "https://publicreporting.cftc.gov/resource/6dca-aqww.json?$limit=50000";
 
   try {
     const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error("CFTC API error");
+    if (!res.ok) {
+      return NextResponse.json({ error: `CFTC API ${res.status}` }, { status: res.status });
+    }
+
     const rows: any[] = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return NextResponse.json({ error: "No rows from CFTC" }, { status: 502 });
+    }
 
-    // Helper to find the latest matching row for a given keyword
-    const pick = (keyword: string) =>
-      rows.find(r =>
-        String(r.market_and_exchange_names || "")
-          .toLowerCase()
-          .includes(keyword.toLowerCase())
-      );
+    // Some copies expose report_date_as_yyyy_mm_dd; others use report_date_long
+    const getDateStr = (r: any) =>
+      (r.report_date_as_yyyy_mm_dd as string) ||
+      (r.report_date_long as string) ||
+      "";
 
-    // FX markets we want (CME contracts)
+    // Latest report date across all rows
+    const latestDate = rows.reduce<string>((acc, r) => {
+      const d = getDateStr(r);
+      return d && d > acc ? d : acc;
+    }, "");
+
+    const latestRows = latestDate ? rows.filter(r => getDateStr(r) === latestDate) : rows;
+
+    const contains = (r: any, kw: string) =>
+      String(r.market_and_exchange_names || "").toLowerCase().includes(kw);
+
+    const findByMarket = (kw: string) =>
+      latestRows.find(r => contains(r, kw)) || rows.find(r => contains(r, kw));
+
     const markets = [
-      { key: "Australian Dollar", label: "AUD (CME)" },
-      { key: "British Pound",    label: "GBP (CME)" },
-      { key: "Euro FX",          label: "EUR (CME)" },
-      { key: "Japanese Yen",     label: "JPY (CME)" },
-      { key: "Canadian Dollar",  label: "CAD (CME)" },
-      { key: "Swiss Franc",      label: "CHF (CME)" },
-      { key: "New Zealand Dollar", label: "NZD (CME)" },
+      { key: "australian dollar", label: "AUD (CME)" },
+      { key: "british pound",     label: "GBP (CME)" },
+      { key: "euro fx",           label: "EUR (CME)" },
+      { key: "japanese yen",      label: "JPY (CME)" },
+      { key: "canadian dollar",   label: "CAD (CME)" },
+      { key: "swiss franc",       label: "CHF (CME)" },
+      { key: "new zealand dollar",label: "NZD (CME)" },
     ];
 
-    const mapped = markets.map(m => {
-      const r = pick(m.key);
+    const out = markets.map(m => {
+      const r = findByMarket(m.key);
       const long = Number(r?.noncomm_positions_long_all ?? 0);
       const short = Number(r?.noncomm_positions_short_all ?? 0);
       const total = long + short || 1;
@@ -58,12 +62,8 @@ export async function GET() {
       };
     });
 
-    return NextResponse.json(mapped);
-  } catch (err) {
-    console.error("COT fetch error:", err);
-    return NextResponse.json(
-      { error: "Failed to fetch COT data" },
-      { status: 500 }
-    );
+    return NextResponse.json(out);
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || "CFTC fetch failed" }, { status: 500 });
   }
 }
