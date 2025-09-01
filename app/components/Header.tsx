@@ -9,11 +9,13 @@ export default function Header() {
         <nav className="flex items-center gap-4 text-sm">
           <Link href="/cot" className="hover:underline">COT Dashboard</Link>
           <a
-            href="https://YOUR-BLACKBULL-AFFILIATE-LINK"
-            target="_blank" rel="noreferrer"
-            className="rounded bg-white/10 px-3 py-2 hover:bg-white/20"
+            href="https://blackbull.com/en/live-account/?cmp=5p0z2d3q&refid=5500"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 rounded bg-white/10 px-3 py-2 hover:bg-white/20"
           >
-            Trade with BlackBull
+            <img src="/blackbullmarkets65.png" alt="BlackBull Markets" className="h-6 w-auto" />
+            <span>Trade with BlackBull</span>
           </a>
         </nav>
       </div>
