@@ -4,5 +4,6 @@
       "path": "/api/cron/cot?key=82fjS9dhs7dkWj29Kls91ndhAkslQ28dhs9sd1ls",
       "schedule": "0 */8 * * *"
     }
-  ]
+  ],
+  "github": {"enabled": true}
 }
