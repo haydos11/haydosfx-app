@@ -1,4 +1,5 @@
-// app/api/cftc-raw/route.ts
+import { errorMessage } from "@/app/lib/errorMessage";
+
 export async function GET() {
   const base = process.env.CFTC_URL!;
   const headers: Record<string, string> = {};
@@ -11,8 +12,8 @@ export async function GET() {
       status: r.status,
       headers: { "content-type": r.headers.get("content-type") ?? "application/json" },
     });
-  } catch (e: any) {
-    return new Response(JSON.stringify({ error: e.message }), {
+  } catch (e: unknown) {
+    return new Response(JSON.stringify({ error: errorMessage(e) }), {
       status: 502,
       headers: { "content-type": "application/json" },
     });

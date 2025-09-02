@@ -1,4 +1,5 @@
-// app/api/cron/cot/route.ts
+import { errorMessage } from "@/app/lib/errorMessage";
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const key = url.searchParams.get("key");
@@ -15,9 +16,9 @@ export async function GET(req: Request) {
       JSON.stringify({ ok: r.ok, status: r.status, body: text.slice(0, 2000) }),
       { headers: { "content-type": "application/json" }, status: r.ok ? 200 : 500 }
     );
-  } catch (e: any) {
+  } catch (e: unknown) {
     return new Response(
-      JSON.stringify({ ok: false, error: e?.message || "fetch failed" }),
+      JSON.stringify({ ok: false, error: errorMessage(e) }),
       { headers: { "content-type": "application/json" }, status: 500 }
     );
   }
