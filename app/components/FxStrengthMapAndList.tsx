@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import ReactECharts from "echarts-for-react";
 import * as echarts from "echarts";
 import isoCountries from "i18n-iso-countries";
@@ -25,8 +25,8 @@ type WorldFeatureProps = { name?: string; ISO_A2?: string };
 type WorldFC = FeatureCollection<Geometry, WorldFeatureProps>;
 
 /** Colors */
-const COLOR_NOT_MEASURED = "#0f172a"; // very dark slate (not in universe)
-const COLOR_NO_DATA_TODAY = "#1f2937"; // medium slate (in universe, null)
+const COLOR_NOT_MEASURED = "#0f172a";
+const COLOR_NO_DATA_TODAY = "#1f2937";
 
 /** Name overrides / normalization */
 const NAME_TO_ISO_OVERRIDES: Record<string, string> = {
@@ -119,8 +119,7 @@ const COUNTRY_CURRENCY: Record<string, string> = {
   ZA: "ZAR",
 };
 
-const canonCCY = (ccy: string) => (ccy === "CNY" ? "CNH" : ccy);
-
+// const canonCCY = (ccy: string) => (ccy === "CNY" ? "CNH" : ccy);
 
 export default function FXStrengthMapAndList() {
   const [data, setData] = useState<Api | null>(null);
@@ -130,7 +129,7 @@ export default function FXStrengthMapAndList() {
   const [mode, setMode] = useState<"intraday" | "close">("intraday");
   const [index, setIndex] = useState(0);
 
-  // Load & register map (always re-register so ISO_A2 is present)
+  // Load & register map
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -195,9 +194,8 @@ export default function FXStrengthMapAndList() {
     };
   }, [mode, index]);
 
-  /** Build series in one pass: strengths baseline, then override with countries[] */
+  /** Build series */
   const seriesData = useMemo(() => {
-    // start with full measured universe set to null (no data today)
     const rows = Object.entries(COUNTRY_CURRENCY).map(([iso, ccy]) => ({
       name: iso,
       value: null as number | null,
@@ -205,7 +203,6 @@ export default function FXStrengthMapAndList() {
     }));
     const idx = new Map(rows.map((d, i) => [d.name, i]));
 
-    // baseline from currency strengths
     const s = data?.strengths ?? {};
     for (const [iso, ccy] of Object.entries(COUNTRY_CURRENCY)) {
       const z = s[ccy as keyof typeof s];
@@ -214,12 +211,11 @@ export default function FXStrengthMapAndList() {
       }
     }
 
-    // per-country overrides
     for (const c of data?.countries ?? []) {
-      if (!COUNTRY_CURRENCY[c.iso2]) continue; // only measured universe
+      if (!COUNTRY_CURRENCY[c.iso2]) continue;
       const i = idx.get(c.iso2);
       if (i != null) {
-        rows[i].value = c.strength; // can be null
+        rows[i].value = c.strength;
         rows[i].currency = c.currency || rows[i].currency;
       }
     }
@@ -227,46 +223,58 @@ export default function FXStrengthMapAndList() {
     return rows;
   }, [data]);
 
-  /** For tooltip: which ISO2s are measured (in our series) */
+  /** For tooltip: measured ISO2s */
   const measuredSet = useMemo(
     () => new Set(seriesData.map((d) => d.name)),
     [seriesData]
   );
 
-  /** Tooltip — use any to dodge overly strict ECharts TS generics */
-  const tooltipFormatter = (p: any) => {
-    const human = p?.region?.properties?.name ?? "";
-    const iso = p?.name ?? "";
-
-    if (!measuredSet.has(iso)) {
-      return `${human || iso}<br/><span style="opacity:.7">Not measured (includes unknown)</span>`;
-    }
-
-    const v = p?.data?.value;
-    if (v == null) {
-      return `${human || iso}<br/><span style="opacity:.7">No data today</span>`;
-    }
-
-    const ccy = p?.data?.currency ?? "";
-    return `
-      <div style="min-width:180px">
-        <div><strong>${human || iso}</strong></div>
-        <div>Currency: ${ccy || "-"}</div>
-        <div>Strength (z): ${Number(v).toFixed(2)}</div>
-      </div>
-    `;
+  /** Minimal shape for ECharts tooltip param (map) */
+  type TooltipParam = {
+    name?: string;
+    region?: { properties?: { name?: string } };
+    data?: { value?: number | null; currency?: string };
   };
+
+  /** Typed + memoized tooltip formatter */
+  const tooltipFormatter = useCallback(
+    (param: unknown): string => {
+      const p = (Array.isArray(param) ? param[0] : param) as TooltipParam;
+
+      const human = p?.region?.properties?.name ?? "";
+      const iso = p?.name ?? "";
+
+      if (!measuredSet.has(iso)) {
+        return `${human || iso}<br/><span style="opacity:.7">Not measured (includes unknown)</span>`;
+      }
+
+      const v = p?.data?.value;
+      if (v == null) {
+        return `${human || iso}<br/><span style="opacity:.7">No data today</span>`;
+      }
+
+      const ccy = p?.data?.currency ?? "";
+      return `
+        <div style="min-width:180px">
+          <div><strong>${human || iso}</strong></div>
+          <div>Currency: ${ccy || "-"}</div>
+          <div>Strength (z): ${Number(v).toFixed(2)}</div>
+        </div>
+      `;
+    },
+    [measuredSet]
+  );
 
   const option = useMemo<echarts.EChartsOption>(() => {
     return {
       backgroundColor: "transparent",
       tooltip: {
         trigger: "item",
-        formatter: tooltipFormatter as any,
+        formatter: tooltipFormatter, // (p: unknown) => string
       },
       visualMap: {
         type: "piecewise",
-        seriesIndex: 0, // single series
+        seriesIndex: 0,
         left: 10,
         bottom: 10,
         orient: "vertical",
@@ -279,13 +287,13 @@ export default function FXStrengthMapAndList() {
           { gt: -1.5, lte: -1.0, color: "#b91c1c" },
           { gt: -1.0, lte: -0.5, color: "#ef4444" },
           { gt: -0.5, lt: -0.05, color: "#fca5a5" },
-          { gte: -0.05, lte: 0.05, color: "#ffffff" }, // tight neutral
+          { gte: -0.05, lte: 0.05, color: "#ffffff" },
           { gt: 0.05, lte: 0.49, color: "#bbf7d0" },
           { gt: 0.49, lte: 0.99, color: "#86efac" },
           { gt: 0.99, lte: 1.49, color: "#22c55e" },
           { gt: 1.49, color: "#14532d" },
         ],
-        outOfRange: { color: COLOR_NO_DATA_TODAY }, // value === null
+        outOfRange: { color: COLOR_NO_DATA_TODAY },
       },
       series: [
         {
@@ -300,10 +308,10 @@ export default function FXStrengthMapAndList() {
           right: 0,
           top: 0,
           bottom: 0,
-          data: seriesData, // measured only; non-measured use areaColor
+          data: seriesData,
         } as echarts.MapSeriesOption,
       ],
-    } as echarts.EChartsOption;
+    };
   }, [seriesData, tooltipFormatter]);
 
   return (

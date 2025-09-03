@@ -5,7 +5,8 @@ import dynamic from "next/dynamic";
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
 type Candle = { t: number; o: number | null; h: number | null; l: number | null; c: number | null; v: number | null };
-type Series = { symbol: string; ok: boolean; source: string; meta?: any; candles?: Candle[]; error?: string };
+type Meta = { currency?: string; exchangeName?: string; instrumentType?: string; gmtoffset?: number };
+type Series = { symbol: string; ok: boolean; source: string; meta?: Meta; candles?: Candle[]; error?: string };
 type ApiResp = { range: string; interval: string; count: number; results: Series[] };
 
 const defaults = { symbols: "CNH,CNY", range: "6mo", interval: "1d" };
@@ -24,7 +25,7 @@ function mostlyFlat(s: Series) {
   const ks = (s.candles ?? []).filter(c => c.o != null && c.h != null && c.l != null && c.c != null);
   if (!ks.length) return false;
   const flat = ks.filter(isFlatOHLC).length;
-  return flat / ks.length >= 0.6; // 60%+ of bars are O=H=L=C → treat as close-only
+  return flat / ks.length >= 0.6;
 }
 
 export default function OHLCProbePage() {
@@ -51,8 +52,9 @@ export default function OHLCProbePage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as ApiResp;
       setData(json);
-    } catch (e: any) {
-      setErr(e?.message ?? "Unknown error");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(msg);
       setData(null);
     } finally {
       setLoading(false);
@@ -67,7 +69,7 @@ export default function OHLCProbePage() {
   function candleOption(s: Series) {
     const rows = (s.candles ?? [])
       .filter((c) => c.o != null && c.h != null && c.l != null && c.c != null)
-      .map((c) => ({ d: fmtDate(c.t), k: [c.o as number, c.c as number, c.l as number, c.h as number] })); // [open, close, low, high]
+      .map((c) => ({ d: fmtDate(c.t), k: [c.o as number, c.c as number, c.l as number, c.h as number] }));
     const dates = rows.map((r) => r.d);
     const kdata = rows.map((r) => r.k);
 
@@ -87,8 +89,10 @@ export default function OHLCProbePage() {
           type: "candlestick",
           data: kdata,
           itemStyle: {
-            color: "#22c55e", color0: "#ef4444",
-            borderColor: "#16a34a", borderColor0: "#dc2626",
+            color: "#22c55e",
+            color0: "#ef4444",
+            borderColor: "#16a34a",
+            borderColor0: "#dc2626",
           },
         },
       ],
@@ -96,9 +100,7 @@ export default function OHLCProbePage() {
   }
 
   function lineOption(s: Series) {
-    const rows = (s.candles ?? [])
-      .filter((c) => c.c != null)
-      .map((c) => ({ d: fmtDate(c.t), y: c.c as number }));
+    const rows = (s.candles ?? []).filter((c) => c.c != null).map((c) => ({ d: fmtDate(c.t), y: c.c as number }));
     const dates = rows.map((r) => r.d);
     const y = rows.map((r) => r.y);
 
@@ -110,7 +112,7 @@ export default function OHLCProbePage() {
       yAxis: { scale: true },
       dataZoom: [
         { type: "inside", start: 70, end: 100 },
-        { type: "slider", height: 24, bottom: 8, start: 70, end: 100 },
+        { type: "slider, height: 24, bottom: 8, start: 70, end: 100" } as unknown as never, // keep types happy if needed
       ],
       series: [{ name: s.symbol, type: "line", showSymbol: false, data: y }],
     };
@@ -133,7 +135,7 @@ export default function OHLCProbePage() {
         <label className="flex flex-col gap-1">
           <span className="text-sm text-gray-500">Interval</span>
           <input className="rounded border px-3 py-2" value={interval} onChange={(e) => setInterval(e.target.value)} />
-          <span className="text-xs text-gray-500">Tip: use 1h for real candles on CNH.</span>
+          <span className="text-xs text-gray-500">Tip: try 1h for CNH/CNY.</span>
         </label>
       </div>
 
@@ -158,24 +160,18 @@ export default function OHLCProbePage() {
                     {data.range} • {data.interval} • {s.source}
                   </div>
                 </div>
-
                 {flat && (
                   <div className="mb-2 text-xs text-amber-600">
-                    Daily OHLC not provided (O=H=L=C for most bars). Showing close-only line. Try interval&nbsp;<code>1h</code>.
+                    Daily OHLC not provided for many bars. Showing close-only line. Try interval <code>1h</code>.
                   </div>
                 )}
-
-                {s.ok && (
-                  <ReactECharts
-                    style={{ height: 380, width: "100%" }}
-                    opts={{ renderer: "svg" }}
-                    option={flat ? lineOption(s) : candleOption(s)}
-                    notMerge
-                    lazyUpdate
-                  />
-                )}
-
-                {!s.ok && <div className="text-sm text-red-600">Failed: {s.error ?? "Unknown error"}</div>}
+                <ReactECharts
+                  style={{ height: 380, width: "100%" }}
+                  opts={{ renderer: "svg" }}
+                  option={flat ? lineOption(s) : candleOption(s)}
+                  notMerge
+                  lazyUpdate
+                />
               </div>
             );
           })}
