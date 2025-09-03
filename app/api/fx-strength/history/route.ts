@@ -1,7 +1,7 @@
 // app/api/fx-strength/history/route.ts
 import { NextResponse } from "next/server";
 
-export const runtime = "edge"; // Vercel Edge-friendly (no Node APIs)
+export const runtime = "edge"; // Vercel Edge-friendly
 
 /** ---------- Types ---------- */
 type Pair = { base: string; quote: string; y: string };
@@ -22,11 +22,12 @@ type HistoryPayload = {
 
 const CACHE_TTL_SECONDS = 600;
 
-/** ---------- Optional Vercel KV (no TS generics on untyped calls) ---------- */
+/** ---------- Optional Vercel KV (typed, no any) ---------- */
 type VercelKV = {
-  get: (key: string) => Promise<any>;
-  set: (key: string, val: any, opts?: { ex?: number }) => Promise<any>;
+  get: (key: string) => Promise<unknown>;
+  set: (key: string, val: unknown, opts?: { ex?: number }) => Promise<unknown>;
 };
+type VercelKVModule = { kv?: VercelKV };
 
 let kvReady: Promise<VercelKV | null> | null = null;
 let kvRef: VercelKV | null = null;
@@ -36,9 +37,8 @@ async function ensureKV(): Promise<VercelKV | null> {
   if (!kvReady) {
     kvReady = (async () => {
       try {
-        const mod: any = await import("@vercel/kv");
-        const kv: VercelKV | undefined = (mod as any).kv;
-        kvRef = kv ?? null;
+        const mod = (await import("@vercel/kv")) as unknown as VercelKVModule;
+        kvRef = mod.kv ?? null;
       } catch {
         kvRef = null;
       }
@@ -58,11 +58,11 @@ async function kvGet<T>(key: string): Promise<T | null> {
     return null;
   }
 }
-async function kvSet<T>(key: string, val: T, ttlSec: number) {
+async function kvSet<T>(key: string, val: T, ttlSec: number): Promise<void> {
   const kv = await ensureKV();
   if (!kv) return;
   try {
-    await kv.set(key, val, { ex: ttlSec });
+    await kv.set(key, val as unknown, { ex: ttlSec });
   } catch {
     // ignore
   }
@@ -145,7 +145,7 @@ const PAIRS_BROAD: Pair[] = [
 
   { base: "AUD", quote: "CHF", y: "AUDCHF=X" },
   { base: "NZD", quote: "CHF", y: "NZDCHF=X" },
-  { base: "CAD", quote: "CHF", y: "CADCHF" + "=X" }, // keep pattern
+  { base: "CAD", quote: "CHF", y: "CADCHF=X" },
   { base: "AUD", quote: "NZD", y: "AUDNZD=X" },
   { base: "AUD", quote: "CAD", y: "AUDCAD=X" },
   { base: "NZD", quote: "CAD", y: "NZDCAD=X" },
