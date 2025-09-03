@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import Image from "next/image";
 
 export default function Header() {
   return (
@@ -14,7 +15,14 @@ export default function Header() {
             rel="noopener noreferrer"
             className="flex items-center gap-2 rounded bg-white/10 px-3 py-2 hover:bg-white/20"
           >
-            <img src="/blackbullmarkets65.png" alt="BlackBull Markets" className="h-6 w-auto" />
+            <Image
+              src="/blackbullmarkets65.png"
+              alt="BlackBull Markets"
+              width={120}
+              height={24}
+              className="h-6 w-auto"
+              priority
+            />
             <span>Trade with BlackBull</span>
           </a>
         </nav>

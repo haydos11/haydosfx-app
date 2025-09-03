@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 // ---------- Types ----------
 type Pair = { base: string; quote: string; y: string };
 type Strength = Record<string, number>;
-type CountryDatum = { iso2: string; currency: string; strength: number };
+type CountryDatum = { iso2: string; currency: string; strength: number | null };
 
 type ApiPayload = {
   updated: string;
@@ -166,7 +166,7 @@ function mapCountries(strengths: Strength): CountryDatum[] {
   return Object.entries(COUNTRY_CURRENCY).map(([iso2, ccy]) => ({
     iso2,
     currency: ccy,
-    strength: strengths[ccy] ?? 0,
+    strength: strengths[ccy] ?? null,
   }));
 }
 

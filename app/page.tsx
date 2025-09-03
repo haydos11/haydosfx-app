@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 
 export default function HomePage() {
   return (
@@ -42,9 +43,11 @@ export default function HomePage() {
           className="group block rounded-2xl border border-neutral-800 bg-neutral-900/40 p-6 hover:bg-neutral-900/60 transition"
         >
           <div className="flex items-center gap-3">
-            <img
+            <Image
               src="/blackbullmarkets65.png"
               alt="BlackBull Markets"
+              width={160}
+              height={40}
               className="h-8 w-auto"
             />
             <h2 className="text-xl font-semibold">Trade with BlackBull</h2>

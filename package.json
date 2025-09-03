@@ -2,11 +2,16 @@
   "name": "haydosfx-app",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=18.17 <21"
+  },
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "vercel:check": "npm ci --omit=dev && npm run typecheck && npm run lint -- --max-warnings=0 && npm run build"
   },
   "dependencies": {
     "@vercel/kv": "^3.0.0",
@@ -24,6 +29,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
+    "@types/geojson": "^7946.0.16",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
