@@ -1,33 +1,122 @@
+// app/api/fx-strength/history/route.ts
 import { NextResponse } from "next/server";
 
-export const dynamic = "force-dynamic";
+export const runtime = "edge"; // Vercel Edge-friendly (no Node APIs)
 
-/** ---------- Config & Types ---------- */
+/** ---------- Types ---------- */
 type Pair = { base: string; quote: string; y: string };
-type Strength = Record<string, number>;
-
-const TTL_SECONDS = 600; // cache 10 min
+type StrengthRow = Record<string, number>;
 
 type HistoryPayload = {
   updated: string;
-  days: number;
-  dates: string[];
-  ccys: string[];
+  tf: number;         // window in trading days (1,5,22,66…)
+  days: number;       // number of output dates
+  dates: string[];    // YYYY-MM-DD
+  ccys: string[];     // legend order
+  scale: "minmax" | "rank" | "normcdf" | "z";
+  smooth: number;     // 0..0.99 EMA alpha
+  winsor: number;     // 0..0.2 (tails clipped per day before scaling)
+  universe: "g8" | "broad";
   series: Record<string, (number | null)[]>;
 };
 
+const CACHE_TTL_SECONDS = 600;
+
+/** ---------- Optional Vercel KV (no TS generics on untyped calls) ---------- */
+type VercelKV = {
+  get: (key: string) => Promise<any>;
+  set: (key: string, val: any, opts?: { ex?: number }) => Promise<any>;
+};
+
+let kvReady: Promise<VercelKV | null> | null = null;
+let kvRef: VercelKV | null = null;
+
+async function ensureKV(): Promise<VercelKV | null> {
+  if (kvRef) return kvRef;
+  if (!kvReady) {
+    kvReady = (async () => {
+      try {
+        const mod: any = await import("@vercel/kv");
+        const kv: VercelKV | undefined = (mod as any).kv;
+        kvRef = kv ?? null;
+      } catch {
+        kvRef = null;
+      }
+      return kvRef;
+    })();
+  }
+  return kvReady;
+}
+
+async function kvGet<T>(key: string): Promise<T | null> {
+  const kv = await ensureKV();
+  if (!kv) return null;
+  try {
+    const v = await kv.get(key);
+    return (v as T) ?? null;
+  } catch {
+    return null;
+  }
+}
+async function kvSet<T>(key: string, val: T, ttlSec: number) {
+  const kv = await ensureKV();
+  if (!kv) return;
+  try {
+    await kv.set(key, val, { ex: ttlSec });
+  } catch {
+    // ignore
+  }
+}
+
+/** ---------- In-memory fallback cache (per-edge isolate) ---------- */
 const memoryCache: Record<string, { ts: number; payload: HistoryPayload }> = {};
 
-// Yahoo v8 chart response (minimal fields we use)
-type YQuote = { close?: (number | null)[] };
-type YResult = {
-  meta?: { regularMarketPrice?: number; chartPreviousClose?: number };
-  timestamp?: number[];
-  indicators?: { quote?: YQuote[] };
-};
-type YResp = { chart?: { result?: YResult[] } };
+/** ---------- Universes ---------- */
+// Exact 28 G8 majors (MarketMilk core vibe)
+const PAIRS_G8: Pair[] = [
+  // USD legs
+  { base: "EUR", quote: "USD", y: "EURUSD=X" },
+  { base: "GBP", quote: "USD", y: "GBPUSD=X" },
+  { base: "AUD", quote: "USD", y: "AUDUSD=X" },
+  { base: "NZD", quote: "USD", y: "NZDUSD=X" },
+  { base: "USD", quote: "JPY", y: "JPY=X" },
+  { base: "USD", quote: "CHF", y: "CHF=X" },
+  { base: "USD", quote: "CAD", y: "CAD=X" },
 
-const PAIRS: Pair[] = [
+  // EUR crosses
+  { base: "EUR", quote: "GBP", y: "EURGBP=X" },
+  { base: "EUR", quote: "JPY", y: "EURJPY=X" },
+  { base: "EUR", quote: "CHF", y: "EURCHF=X" },
+  { base: "EUR", quote: "CAD", y: "EURCAD=X" },
+  { base: "EUR", quote: "AUD", y: "EURAUD=X" },
+  { base: "EUR", quote: "NZD", y: "EURNZD=X" },
+
+  // GBP crosses
+  { base: "GBP", quote: "JPY", y: "GBPJPY=X" },
+  { base: "GBP", quote: "CHF", y: "GBPCHF=X" },
+  { base: "GBP", quote: "CAD", y: "GBPCAD=X" },
+  { base: "GBP", quote: "AUD", y: "GBPAUD=X" },
+  { base: "GBP", quote: "NZD", y: "GBPNZD=X" },
+
+  // AUD crosses
+  { base: "AUD", quote: "JPY", y: "AUDJPY=X" },
+  { base: "AUD", quote: "CHF", y: "AUDCHF=X" },
+  { base: "AUD", quote: "CAD", y: "AUDCAD=X" },
+  { base: "AUD", quote: "NZD", y: "AUDNZD=X" },
+
+  // NZD crosses
+  { base: "NZD", quote: "JPY", y: "NZDJPY=X" },
+  { base: "NZD", quote: "CHF", y: "NZDCHF=X" },
+  { base: "NZD", quote: "CAD", y: "NZDCAD=X" },
+
+  // CAD / CHF / JPY last three
+  { base: "CAD", quote: "JPY", y: "CADJPY=X" },
+  { base: "CHF", quote: "JPY", y: "CHFJPY=X" },
+];
+const CCYS_G8 = ["USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"];
+
+// Broader (trimmed toward majors you had)
+const PAIRS_BROAD: Pair[] = [
   { base: "EUR", quote: "USD", y: "EURUSD=X" },
   { base: "GBP", quote: "USD", y: "GBPUSD=X" },
   { base: "AUD", quote: "USD", y: "AUDUSD=X" },
@@ -42,8 +131,6 @@ const PAIRS: Pair[] = [
   { base: "EUR", quote: "AUD", y: "EURAUD=X" },
   { base: "EUR", quote: "NZD", y: "EURNZD=X" },
   { base: "EUR", quote: "CAD", y: "EURCAD=X" },
-  { base: "EUR", quote: "SEK", y: "EURSEK=X" },
-  { base: "EUR", quote: "NOK", y: "EURNOK=X" },
 
   { base: "GBP", quote: "JPY", y: "GBPJPY=X" },
   { base: "GBP", quote: "CHF", y: "GBPCHF=X" },
@@ -55,44 +142,23 @@ const PAIRS: Pair[] = [
   { base: "NZD", quote: "JPY", y: "NZDJPY=X" },
   { base: "CAD", quote: "JPY", y: "CADJPY=X" },
   { base: "CHF", quote: "JPY", y: "CHFJPY=X" },
-  { base: "SEK", quote: "JPY", y: "SEKJPY=X" },
-  { base: "NOK", quote: "JPY", y: "NOKJPY=X" },
 
   { base: "AUD", quote: "CHF", y: "AUDCHF=X" },
   { base: "NZD", quote: "CHF", y: "NZDCHF=X" },
-  { base: "CAD", quote: "CHF", y: "CADCHF=X" },
+  { base: "CAD", quote: "CHF", y: "CADCHF" + "=X" }, // keep pattern
   { base: "AUD", quote: "NZD", y: "AUDNZD=X" },
   { base: "AUD", quote: "CAD", y: "AUDCAD=X" },
   { base: "NZD", quote: "CAD", y: "NZDCAD=X" },
-
-  { base: "USD", quote: "CNH", y: "CNH=X" },
-  { base: "USD", quote: "HKD", y: "HKD=X" },
-  { base: "USD", quote: "SGD", y: "SGD=X" },
-  { base: "USD", quote: "MXN", y: "MXN=X" },
-  { base: "USD", quote: "ZAR", y: "ZAR=X" },
 ];
+const CCYS_BROAD = ["USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"];
 
-// Which currencies to include in the history output (order is legend order)
-const CCYS = [
-  "AUD",
-  "CAD",
-  "CHF",
-  "EUR",
-  "GBP",
-  "JPY",
-  "NZD",
-  "USD",
-  "SEK",
-  "NOK",
-  "SGD",
-  "HKD",
-  "CNH",
-  "MXN",
-  "ZAR",
-];
+/** ---------- Yahoo minimal types ---------- */
+type YQuote = { close?: (number | null)[] };
+type YResult = { timestamp?: number[]; indicators?: { quote?: YQuote[] } };
+type YResp = { chart?: { result?: YResult[] } };
 
-/** ---------- Math ---------- */
-function zscore(values: number[]) {
+/** ---------- Math helpers ---------- */
+function zstats(values: number[]) {
   const mu = values.reduce((a, b) => a + b, 0) / Math.max(values.length, 1);
   const sd =
     Math.sqrt(
@@ -101,39 +167,92 @@ function zscore(values: number[]) {
     ) || 1;
   return { mu, sd };
 }
+function minmaxScaleRow(row: StrengthRow) {
+  const vals = Object.values(row);
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  const span = hi - lo || 1;
+  const out: StrengthRow = {};
+  for (const k of Object.keys(row)) out[k] = ((row[k] - lo) / span) * 10;
+  return out;
+}
+function zScaleRow(row: StrengthRow) {
+  const { mu, sd } = zstats(Object.values(row));
+  const out: StrengthRow = {};
+  for (const k of Object.keys(row)) out[k] = (row[k] - mu) / sd;
+  return out;
+}
+function rankScaleRow(row: StrengthRow) {
+  const entries = Object.entries(row).sort((a, b) => a[1] - b[1]);
+  const n = Math.max(entries.length - 1, 1);
+  const out: StrengthRow = {};
+  entries.forEach(([k], i) => (out[k] = (i / n) * 10));
+  return out;
+}
+function ema(prev: number | null, value: number | null, alpha: number): number | null {
+  if (value == null) return prev;
+  if (prev == null) return value;
+  return alpha * value + (1 - alpha) * prev;
+}
 
-function computeStrengthFromPairs(
-  pairReturns: Record<string, number>
-): Strength {
-  const bucket: Record<string, number[]> = {};
-  for (const p of PAIRS) {
-    const r = pairReturns[p.y];
-    if (!Number.isFinite(r)) continue;
-    (bucket[p.base] ||= []).push(r); // base +r
-    (bucket[p.quote] ||= []).push(-r); // quote −r
+/** ----- Pretty scaling (Φ(z)) + Winsorization ----- */
+function erf(x: number) {
+  // Abramowitz–Stegun approximation
+  const a1=0.254829592, a2=-0.284496736, a3=1.421413741, a4=-1.453152027, a5=1.061405429;
+  const p=0.3275911;
+  const sign = x < 0 ? -1 : 1;
+  const ax = Math.abs(x);
+  const t = 1 / (1 + p * ax);
+  const y = 1 - (((((a5*t + a4)*t) + a3)*t + a2)*t + a1)*t*Math.exp(-ax*ax);
+  return sign * y;
+}
+function normCdf(z: number) {
+  return 0.5 * (1 + erf(z / Math.SQRT2));
+}
+function quantile(sorted: number[], q: number) {
+  if (sorted.length === 0) return NaN;
+  const pos = (sorted.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  if (sorted[base + 1] !== undefined) {
+    return sorted[base] + rest * (sorted[base + 1] - sorted[base]);
+  } else {
+    return sorted[base];
   }
-  const strengths: Strength = {};
-  for (const c of Object.keys(bucket)) {
-    const arr = bucket[c];
-    strengths[c] = arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+function winsorRow(row: Record<string, number>, p: number) {
+  if (!(p > 0 && p < 0.5)) return row;
+  const vals = Object.values(row).filter(Number.isFinite).slice().sort((a,b)=>a-b);
+  if (vals.length < 3) return row;
+  const lo = quantile(vals, p);
+  const hi = quantile(vals, 1 - p);
+  const out: Record<string, number> = {};
+  for (const k of Object.keys(row)) {
+    const v = row[k];
+    out[k] = Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : v;
   }
-  const vals = Object.values(strengths);
-  const { mu, sd } = zscore(vals);
-  for (const k of Object.keys(strengths))
-    strengths[k] = (strengths[k] - mu) / sd;
-  return strengths;
+  return out;
+}
+function normcdfScaleRow(row: Record<string, number>) {
+  const { mu, sd } = zstats(Object.values(row));
+  const out: Record<string, number> = {};
+  for (const k of Object.keys(row)) {
+    const z = sd ? (row[k] - mu) / sd : 0;
+    out[k] = 10 * normCdf(z); // smooth 0..10
+  }
+  return out;
 }
 
 /** ---------- Data fetch ---------- */
-// fetch daily closes for each pair; build map: symbol -> {dateISO -> logReturn}
-async function fetchDailyPairReturns(range = "6mo") {
-  const out: Record<string, Record<string, number>> = {}; // sym -> date -> log ret
+// Fetch daily closes for each pair; returns sym -> { dateISO -> close }
+async function fetchDailyCloses(pairs: Pair[], range = "1y") {
+  const out: Record<string, Record<string, number>> = {};
   const chunk = <T,>(arr: T[], n = 6) =>
     Array.from({ length: Math.ceil(arr.length / n) }, (_, i) =>
       arr.slice(i * n, (i + 1) * n)
     );
 
-  for (const group of chunk(PAIRS, 6)) {
+  for (const group of chunk(pairs, 6)) {
     await Promise.all(
       group.map(async (p) => {
         try {
@@ -153,32 +272,19 @@ async function fetchDailyPairReturns(range = "6mo") {
           const r = j?.chart?.result?.[0];
           const close = r?.indicators?.quote?.[0]?.close;
           const ts = r?.timestamp;
-
-          if (!close || !ts || close.length < 2) return;
+          if (!close || !ts || close.length === 0) return;
 
           const m: Record<string, number> = {};
-          for (let i = 1; i < close.length; i++) {
+          for (let i = 0; i < close.length; i++) {
             const c = close[i];
-            const prev = close[i - 1];
-
-            // Narrow to finite numbers; close[] is (number|null)[]
-            if (
-              typeof c !== "number" ||
-              typeof prev !== "number" ||
-              !Number.isFinite(c) ||
-              !Number.isFinite(prev)
-            ) {
-              continue;
-            }
-
-            const dateISO = new Date(ts[i] * 1000)
-              .toISOString()
-              .slice(0, 10); // attribute return to this day’s close
-            m[dateISO] = Math.log(c / prev);
+            const t = ts[i];
+            if (typeof c !== "number" || !Number.isFinite(c) || typeof t !== "number") continue;
+            const dateISO = new Date(t * 1000).toISOString().slice(0, 10);
+            m[dateISO] = c;
           }
           out[p.y] = m;
         } catch {
-          // ignore a single pair failure
+          // ignore single pair failure
         }
       })
     );
@@ -186,63 +292,183 @@ async function fetchDailyPairReturns(range = "6mo") {
   return out;
 }
 
+/** ---------- Strength calc (MarketMilk-style) ---------- */
+function computeStrengthWindowed(
+  pairs: Pair[],
+  closes: Record<string, Record<string, number>>,
+  datesAsc: string[],
+  tf: number
+) {
+  const strengthsByDate: Record<string, StrengthRow> = {};
+
+  const indexed: Record<string, { dates: string[]; map: Record<string, number> }> = {};
+  for (const p of pairs) {
+    const map = closes[p.y];
+    if (!map) continue;
+    const ds = Object.keys(map).sort();
+    indexed[p.y] = { dates: ds, map };
+  }
+
+  for (const d of datesAsc) {
+    const bucket: Record<string, number[]> = {};
+    for (const p of pairs) {
+      const idx = indexed[p.y];
+      if (!idx) continue;
+
+      const pos = idx.dates.indexOf(d);
+      if (pos === -1) continue;
+      const prevPos = pos - tf;
+      if (prevPos < 0) continue;
+
+      const cNow = idx.map[idx.dates[pos]];
+      const cPrev = idx.map[idx.dates[prevPos]];
+      if (!Number.isFinite(cNow) || !Number.isFinite(cPrev)) continue;
+
+      const chg = cPrev === 0 ? 0 : cNow / cPrev - 1; // cumulative % over window
+
+      (bucket[p.base] ||= []).push(chg);
+      (bucket[p.quote] ||= []).push(-chg);
+    }
+
+    const row: StrengthRow = {};
+    for (const k of Object.keys(bucket)) {
+      const arr = bucket[k];
+      if (arr.length === 0) continue;
+      row[k] = arr.reduce((a, b) => a + b, 0) / arr.length;
+    }
+    strengthsByDate[d] = row;
+  }
+
+  return strengthsByDate;
+}
+
 /** ---------- Handler ---------- */
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const days = Math.max(
-      5,
-      Math.min(180, Number(searchParams.get("days") || "30"))
-    ); // 30 or 60 commonly
 
-    const cacheKey = `hist:${days}`;
-    const cached = memoryCache[cacheKey];
-    if (cached && Date.now() - cached.ts < TTL_SECONDS * 1000) {
-      return NextResponse.json(cached.payload);
+    // Params
+    const tf = Math.max(1, Math.min(90, Number(searchParams.get("tf") || "22"))); // 1,5,22,66 typical
+    const days = Math.max(5, Math.min(180, Number(searchParams.get("days") || "60")));
+    const universe = (searchParams.get("universe") || "g8") as "g8" | "broad";
+    const scale = (searchParams.get("scale") || "normcdf") as "minmax" | "rank" | "normcdf" | "z";
+    const smooth = Math.max(0, Math.min(0.99, Number(searchParams.get("smooth") || "0"))); // 0..0.99
+    const winsor = Math.max(0, Math.min(0.2, Number(searchParams.get("winsor") || "0"))); // 0..0.2
+
+    const PAIRS = universe === "g8" ? PAIRS_G8 : PAIRS_BROAD;
+    const CCYS = universe === "g8" ? CCYS_G8 : CCYS_BROAD;
+
+    const cacheKey = `mmhist:${universe}:${tf}:${days}:${scale}:${smooth}:${winsor}`;
+
+    // KV cache
+    const kvCached = await kvGet<HistoryPayload>(cacheKey);
+    if (kvCached) {
+      return new NextResponse(JSON.stringify(kvCached), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "s-maxage=600, stale-while-revalidate=60",
+        },
+      });
     }
 
-    // 6 months covers 60 days easily
-    const pairReturnsByDate = await fetchDailyPairReturns("6mo");
+    // Memory cache
+    const mem = memoryCache[cacheKey];
+    if (mem && Date.now() - mem.ts < CACHE_TTL_SECONDS * 1000) {
+      return new NextResponse(JSON.stringify(mem.payload), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "s-maxage=600, stale-while-revalidate=60",
+        },
+      });
+    }
 
-    // Build the union of dates, sort ascending
+    // Data
+    const closesBySym = await fetchDailyCloses(PAIRS, "1y");
     const allDates = Array.from(
-      new Set(Object.values(pairReturnsByDate).flatMap((m) => Object.keys(m)))
-    ).sort(); // YYYY-MM-DD sorts lexicographically
+      new Set(Object.values(closesBySym).flatMap((m) => Object.keys(m)))
+    ).sort();
 
-    // Take the last N dates
-    const slice = allDates.slice(-days);
+    const need = days + tf;
+    const effective = allDates.slice(-need);
+    if (effective.length < tf + 1) {
+      return NextResponse.json(
+        { error: "Insufficient data to compute requested timeframe." },
+        { status: 400 }
+      );
+    }
 
-    // For each date, compute strengths (z-scored) from the pair returns available that day
-    const dates: string[] = [];
-    const series: Record<string, (number | null)[]> = {};
-    for (const c of CCYS) series[c] = [];
+    // Raw strength rows
+    const rawRows = computeStrengthWindowed(PAIRS, closesBySym, effective, tf);
+    const dates = effective.slice(-days);
 
-    for (const d of slice) {
-      const pairRets: Record<string, number> = {};
-      for (const p of PAIRS) {
-        const r = pairReturnsByDate[p.y]?.[d];
-        if (typeof r === "number" && Number.isFinite(r)) {
-          pairRets[p.y] = r;
-        }
+    // Scale each row (with optional winsorization)
+    const scaledRows: Record<string, StrengthRow> = {};
+    for (const d of dates) {
+      const baseRow: StrengthRow = {};
+      for (const c of CCYS) baseRow[c] = Number.NaN;
+
+      let row = { ...baseRow, ...(rawRows[d] || {}) };
+      if (winsor > 0) row = winsorRow(row, winsor);
+
+      let scaled: StrengthRow;
+      switch (scale) {
+        case "z":
+          scaled = zScaleRow(row);          // raw z (not 0..10)
+          break;
+        case "rank":
+          scaled = rankScaleRow(row);       // 0..10 by rank
+          break;
+        case "normcdf":
+          scaled = normcdfScaleRow(row);    // smooth 0..10 via Φ(z)
+          break;
+        case "minmax":
+        default:
+          scaled = minmaxScaleRow(row);     // 0..10 linear
       }
-      const strengths = computeStrengthFromPairs(pairRets);
-      dates.push(d);
+      scaledRows[d] = scaled;
+    }
+
+    // Build series with optional EMA smoothing
+    const series: Record<string, (number | null)[]> = {};
+    const prev: Record<string, number | null> = {};
+    for (const c of CCYS) {
+      series[c] = [];
+      prev[c] = null;
+    }
+    for (const d of dates) {
+      const row = scaledRows[d];
       for (const c of CCYS) {
-        const s = strengths[c];
-        series[c].push(typeof s === "number" && Number.isFinite(s) ? s : null);
+        const v = row[c];
+        const val = Number.isFinite(v) ? (v as number) : null;
+        const sm = smooth > 0 ? ema(prev[c], val, smooth) : val;
+        series[c].push(sm);
+        prev[c] = sm;
       }
     }
 
     const payload: HistoryPayload = {
       updated: new Date().toISOString(),
+      tf,
       days,
-      dates, // e.g. ["2025-08-05", ...]
-      ccys: CCYS, // order for legend
-      series, // { USD: [z,...], EUR: [z,...], ... }
+      dates,
+      ccys: CCYS,
+      series,
+      scale,
+      smooth,
+      winsor,
+      universe,
     };
 
+    // Save caches
     memoryCache[cacheKey] = { ts: Date.now(), payload };
-    return NextResponse.json(payload);
+    await kvSet(cacheKey, payload, CACHE_TTL_SECONDS);
+
+    return new NextResponse(JSON.stringify(payload), {
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "s-maxage=600, stale-while-revalidate=60",
+      },
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: message }, { status: 502 });

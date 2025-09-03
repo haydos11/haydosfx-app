@@ -27,7 +27,7 @@ function ewma(values: (number | null)[], alpha: number): (number | null)[] {
 
 export default function FXStrengthHistory() {
   const [days, setDays] = useState<30 | 60>(30);
-  const [smooth, setSmooth] = useState<number>(0); // 0 = off, 0.1..0.95 = EWMA alpha
+  const [smooth, setSmooth] = useState<number>(0.2); // 0 = raw, 1 = max smoothing
   const [data, setData] = useState<HistoryApi | null>(null);
   const [selected, setSelected] = useState<string[]>(MAJORS);
   const [err, setErr] = useState<string | null>(null);
@@ -47,7 +47,6 @@ export default function FXStrengthHistory() {
         const json: HistoryApi = await res.json();
         if (!alive) return;
         setData(json);
-        // Keep only currencies that exist in the response
         setSelected((sel) => sel.filter((c) => json.ccys.includes(c)));
         setErr(null);
       } catch (e: unknown) {
@@ -67,36 +66,38 @@ export default function FXStrengthHistory() {
     }
 
     const palette = [
-      "#60a5fa",
-      "#a78bfa",
-      "#34d399",
-      "#f472b6",
-      "#f59e0b",
-      "#22d3ee",
-      "#fb7185",
-      "#c084fc",
-      "#f97316",
-      "#10b981",
-      "#06b6d4",
-      "#94a3b8",
+      "#60a5fa", "#a78bfa", "#34d399", "#f472b6",
+      "#f59e0b", "#22d3ee", "#fb7185", "#c084fc",
+      "#f97316", "#10b981", "#06b6d4", "#94a3b8",
     ];
 
     const visible = selected.length ? selected : data.ccys;
 
-    const series: echarts.LineSeriesOption[] = visible.map((ccy) => {
-      const raw = data.series[ccy] ?? [];
-      const dat = smooth > 0 ? ewma(raw, smooth) : raw;
-      return {
-        name: ccy,
-        type: "line" as const,
-        smooth: true,
-        showSymbol: false,
-        data: dat,
-        emphasis: { focus: "series" as const },
-        lineStyle: { width: 2 },
-        z: 2,
-      };
-    });
+    const series: echarts.LineSeriesOption[] = visible.map((ccy, idx) => {
+  const raw = data.series[ccy] ?? [];
+  const alpha = 1 - smooth;
+  const dat = smooth > 0 ? ewma(raw, alpha) : raw;
+  return {
+    name: ccy,
+    type: "line" as const,
+    smooth: true,
+    showSymbol: false,
+    data: dat,
+    emphasis: { focus: "series" as const },
+    lineStyle: { width: 2 },
+    z: 2,
+    endLabel: {
+      show: true,
+      formatter: () => ccy, // show currency code
+      fontSize: 11,
+      color: "inherit",     // match the line color automatically
+    },
+    labelLayout: {
+      moveOverlap: "shiftY", // prevent overlapping labels
+    },
+  };
+});
+
 
     return {
       color: palette,
@@ -161,6 +162,7 @@ export default function FXStrengthHistory() {
             <label className="text-xs text-neutral-400 whitespace-nowrap">
               Smoothing
             </label>
+            <span className="text-xs text-neutral-500">raw</span>
             <input
               type="range"
               min={0}
@@ -169,8 +171,9 @@ export default function FXStrengthHistory() {
               value={smooth}
               onChange={(e) => setSmooth(Number(e.target.value))}
               className="w-40 accent-purple-400"
-              title="EWMA alpha (0 = off)"
+              title="Smoothing (0 = raw, 1 = max)"
             />
+            <span className="text-xs text-neutral-500">max</span>
             <span className="text-xs tabular-nums text-neutral-300">
               {smooth.toFixed(2)}
             </span>
@@ -200,10 +203,7 @@ export default function FXStrengthHistory() {
       {err && <div className="text-rose-400 text-sm mb-2">{err}</div>}
 
       <div className="h-[360px]">
-        <ReactECharts
-          option={option}
-          style={{ width: "100%", height: "100%" }}
-        />
+        <ReactECharts option={option} style={{ width: "100%", height: "100%" }} />
       </div>
 
       <p className="text-xs text-neutral-500 mt-2">
@@ -211,7 +211,7 @@ export default function FXStrengthHistory() {
       </p>
 
       <p className="text-xs text-neutral-500 mt-1">
-        Smoothing uses EWMA with α = {smooth.toFixed(2)} (0 = off).
+        EWMA α = {(1 - smooth).toFixed(2)} &nbsp; (0 = raw, 1 = max smoothing)
       </p>
     </div>
   );

@@ -300,7 +300,7 @@ export default function FXStrengthMapAndList() {
           type: "map",
           map: "world_iso",
           nameProperty: "ISO_A2",
-          roam: true,
+          roam: false,
           itemStyle: { borderColor: "#333", areaColor: COLOR_NOT_MEASURED },
           emphasis: { label: { show: false } },
           scaleLimit: { min: 1, max: 10 },
