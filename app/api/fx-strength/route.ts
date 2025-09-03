@@ -7,9 +7,34 @@ type Pair = { base: string; quote: string; y: string };
 type Strength = Record<string, number>;
 type CountryDatum = { iso2: string; currency: string; strength: number };
 
+type ApiPayload = {
+  updated: string;
+  mode: "intraday" | "close";
+  index: number; // day offset when mode=close
+  labelDate: string | null; // pretty date label for mode=close
+  strengths: Record<string, number>;
+  countries: CountryDatum[];
+  ranking: { currency: string; z: number }[];
+};
+
+type V7Quote = {
+  symbol: string;
+  regularMarketPrice?: number;
+  regularMarketPreviousClose?: number;
+};
+type V7Resp = { quoteResponse?: { result?: V7Quote[] } };
+
+type YQuote = { close?: (number | null)[] };
+type YResult = {
+  meta?: { regularMarketPrice?: number; chartPreviousClose?: number };
+  timestamp?: number[];
+  indicators?: { quote?: YQuote[] };
+};
+type YResp = { chart?: { result?: YResult[] } };
+
 // ---------- Config ----------
 const TTL_SECONDS = 60;
-const memoryCache: Record<string, { payload: any; ts: number }> = {}; // keyed by cache key
+const memoryCache: Record<string, { payload: ApiPayload; ts: number }> = {}; // keyed by cache key
 
 const PAIRS: Pair[] = [
   { base: "EUR", quote: "USD", y: "EURUSD=X" },
@@ -57,23 +82,68 @@ const PAIRS: Pair[] = [
 ];
 
 const COUNTRY_CURRENCY: Record<string, string> = {
-  US:"USD", CA:"CAD", MX:"MXN", BR:"BRL", AR:"ARS", CL:"CLP", CO:"COP",
-  GB:"GBP", IE:"EUR", FR:"EUR", DE:"EUR", ES:"EUR", IT:"EUR", NL:"EUR", BE:"EUR",
-  PT:"EUR", AT:"EUR", FI:"EUR", GR:"EUR", SK:"EUR", SI:"EUR", EE:"EUR", LV:"EUR", LT:"EUR", LU:"EUR",
-  CH:"CHF", NO:"NOK", SE:"SEK", DK:"DKK", PL:"PLN", CZ:"CZK", HU:"HUF",
-  AU:"AUD", NZ:"NZD", JP:"JPY", CN:"CNH", HK:"HKD", SG:"SGD", KR:"KRW", TW:"TWD", TH:"THB", IN:"INR",
-  ZA:"ZAR", AE:"AED", SA:"SAR", IL:"ILS",
+  US: "USD",
+  CA: "CAD",
+  MX: "MXN",
+  BR: "BRL",
+  AR: "ARS",
+  CL: "CLP",
+  CO: "COP",
+  GB: "GBP",
+  IE: "EUR",
+  FR: "EUR",
+  DE: "EUR",
+  ES: "EUR",
+  IT: "EUR",
+  NL: "EUR",
+  BE: "EUR",
+  PT: "EUR",
+  AT: "EUR",
+  FI: "EUR",
+  GR: "EUR",
+  SK: "EUR",
+  SI: "EUR",
+  EE: "EUR",
+  LV: "EUR",
+  LT: "EUR",
+  LU: "EUR",
+  CH: "CHF",
+  NO: "NOK",
+  SE: "SEK",
+  DK: "DKK",
+  PL: "PLN",
+  CZ: "CZK",
+  HU: "HUF",
+  AU: "AUD",
+  NZ: "NZD",
+  JP: "JPY",
+  CN: "CNH",
+  HK: "HKD",
+  SG: "SGD",
+  KR: "KRW",
+  TW: "TWD",
+  TH: "THB",
+  IN: "INR",
+  ZA: "ZAR",
+  AE: "AED",
+  SA: "SAR",
+  IL: "ILS",
 };
 
 // ---------- Math ----------
 function zscore(values: number[]) {
   const mu = values.reduce((a, b) => a + b, 0) / Math.max(values.length, 1);
   const sd =
-    Math.sqrt(values.reduce((a, b) => a + (b - mu) * (b - mu), 0) / Math.max(values.length, 1)) || 1;
+    Math.sqrt(
+      values.reduce((a, b) => a + (b - mu) * (b - mu), 0) /
+        Math.max(values.length, 1)
+    ) || 1;
   return { mu, sd };
 }
 
-function computeStrengthFromPairs(pairReturns: Record<string, number>): Strength {
+function computeStrengthFromPairs(
+  pairReturns: Record<string, number>
+): Strength {
   const bucket: Record<string, number[]> = {};
   for (const p of PAIRS) {
     const r = pairReturns[p.y];
@@ -101,7 +171,9 @@ function mapCountries(strengths: Strength): CountryDatum[] {
 }
 
 // ---------- Yahoo helpers ----------
-async function fetchYahooQuoteBatch(symbols: string[]) {
+async function fetchYahooQuoteBatch(
+  symbols: string[]
+): Promise<V7Quote[] | null> {
   const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(
     symbols.join(",")
   )}`;
@@ -114,12 +186,15 @@ async function fetchYahooQuoteBatch(symbols: string[]) {
     cache: "no-store",
   });
   if (!res.ok) return null;
-  const json: any = await res.json();
+  const json = (await res.json()) as V7Resp;
   return json?.quoteResponse?.result ?? null;
 }
 
-async function fetchYahooPricesLive(): Promise<Record<string, { price: number; prev: number }>> {
+async function fetchYahooPricesLive(): Promise<
+  Record<string, { price: number; prev: number }>
+> {
   const out: Record<string, { price: number; prev: number }> = {};
+
   // try v7 first
   try {
     const batch = await fetchYahooQuoteBatch(PAIRS.map((p) => p.y));
@@ -132,11 +207,17 @@ async function fetchYahooPricesLive(): Promise<Record<string, { price: number; p
         }
       }
     }
-  } catch {}
+  } catch {
+    // ignore and fall back
+  }
+
   // fallback: per-symbol chart meta
   const missing = PAIRS.map((p) => p.y).filter((s) => !out[s]);
   const chunk = (arr: string[], n = 6) =>
-    Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, (i + 1) * n));
+    Array.from({ length: Math.ceil(arr.length / n) }, (_, i) =>
+      arr.slice(i * n, (i + 1) * n)
+    );
+
   for (const group of chunk(missing, 6)) {
     await Promise.all(
       group.map(async (sym) => {
@@ -153,14 +234,16 @@ async function fetchYahooPricesLive(): Promise<Record<string, { price: number; p
             cache: "no-store",
           });
           if (!res.ok) return;
-          const j: any = await res.json();
+          const j = (await res.json()) as YResp;
           const meta = j?.chart?.result?.[0]?.meta;
           const price = Number(meta?.regularMarketPrice);
           const prev = Number(meta?.chartPreviousClose);
           if (Number.isFinite(price) && Number.isFinite(prev) && prev > 0) {
             out[sym] = { price, prev };
           }
-        } catch {}
+        } catch {
+          // ignore individual symbol failure
+        }
       })
     );
   }
@@ -171,15 +254,17 @@ async function fetchYahooPricesLive(): Promise<Record<string, { price: number; p
 async function fetchYahooDailyReturns(index: number): Promise<{
   returns: Record<string, number>;
   labelDate: string | null; // ISO date for the chosen day, if available
-  available: number; // how many daily bars available
+  available: number; // how many daily bars available (rough guess)
 }> {
   const returns: Record<string, number> = {};
   let labelDate: string | null = null;
 
   const chunk = (arr: Pair[], n = 6) =>
-    Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, (i + 1) * n));
+    Array.from({ length: Math.ceil(arr.length / n) }, (_, i) =>
+      arr.slice(i * n, (i + 1) * n)
+    );
 
-  // we fetch 3 months of daily data so you can step back comfortably
+  // fetch 3 months of daily data so you can step back comfortably
   for (const group of chunk(PAIRS, 6)) {
     await Promise.all(
       group.map(async (p) => {
@@ -196,28 +281,46 @@ async function fetchYahooDailyReturns(index: number): Promise<{
             cache: "no-store",
           });
           if (!res.ok) return;
-          const j: any = await res.json();
+
+          const j = (await res.json()) as YResp;
           const r = j?.chart?.result?.[0];
-          const close = r?.indicators?.quote?.[0]?.close as number[] | undefined;
-          const ts = r?.timestamp as number[] | undefined;
-          if (!close || close.length < 2) return;
+          const close = r?.indicators?.quote?.[0]?.close;
+          const ts = r?.timestamp;
+
+          if (!close || !ts || close.length < 2) return;
+
           // Find the bar we want: from the END (latest), step back by index
           const last = close.length - 1 - index;
           const prev = last - 1;
-          if (last >= 0 && prev >= 0 && Number.isFinite(close[last]) && Number.isFinite(close[prev])) {
-            const ret = Math.log(close[last] / close[prev]);
+
+          const cLast = close[last];
+          const cPrev = close[prev];
+
+          if (
+            last >= 0 &&
+            prev >= 0 &&
+            typeof cLast === "number" &&
+            typeof cPrev === "number" &&
+            Number.isFinite(cLast) &&
+            Number.isFinite(cPrev)
+          ) {
+            const ret = Math.log(cLast / cPrev);
             returns[p.y] = ret;
-            if (!labelDate && ts && ts[last]) {
-              const d = new Date(ts[last] * 1000);
+
+            const t = ts[last];
+            if (!labelDate && typeof t === "number") {
+              const d = new Date(t * 1000);
               labelDate = d.toISOString().slice(0, 10);
             }
           }
-        } catch {}
+        } catch {
+          // ignore individual symbol failure
+        }
       })
     );
   }
 
-  // available bars is the minimum we likely have across pairs; just return a safe guess (60)
+  // available bars is a rough minimum; safe guess
   return { returns, labelDate, available: 60 };
 }
 
@@ -225,8 +328,10 @@ async function fetchYahooDailyReturns(index: number): Promise<{
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const mode = (searchParams.get("mode") || "intraday").toLowerCase(); // "intraday" | "close"
-    const index = Math.max(0, Number(searchParams.get("index") || "0")); // day offset for close mode
+    const rawMode = (searchParams.get("mode") || "intraday").toLowerCase();
+    const mode: "intraday" | "close" =
+      rawMode === "close" ? "close" : "intraday";
+    const index = Math.max(0, Number(searchParams.get("index") || "0"));
 
     const cacheKey = `${mode}:${index}`;
     const cached = memoryCache[cacheKey];
@@ -249,7 +354,9 @@ export async function GET(req: Request) {
       const quotes = await fetchYahooPricesLive();
       for (const p of PAIRS) {
         const q = quotes[p.y];
-        if (q) pairReturns[p.y] = Math.log(q.price / q.prev);
+        if (q && Number.isFinite(q.price) && Number.isFinite(q.prev) && q.prev > 0) {
+          pairReturns[p.y] = Math.log(q.price / q.prev);
+        }
       }
       if (Object.keys(pairReturns).length === 0) {
         throw new Error("No intraday quotes available from Yahoo.");
@@ -262,7 +369,7 @@ export async function GET(req: Request) {
       .sort((a, b) => b[1] - a[1])
       .map(([currency, z]) => ({ currency, z }));
 
-    const payload = {
+    const payload: ApiPayload = {
       updated: new Date().toISOString(),
       mode,
       index,
@@ -274,7 +381,11 @@ export async function GET(req: Request) {
 
     memoryCache[cacheKey] = { payload, ts: Date.now() };
     return NextResponse.json(payload);
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message ?? "Failed to compute FX strength" }, { status: 502 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json(
+      { error: message ?? "Failed to compute FX strength" },
+      { status: 502 }
+    );
   }
 }

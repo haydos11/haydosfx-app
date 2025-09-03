@@ -50,9 +50,9 @@ export default function FXStrengthHistory() {
         // Keep only currencies that exist in the response
         setSelected((sel) => sel.filter((c) => json.ccys.includes(c)));
         setErr(null);
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (!alive) return;
-        setErr(e?.message ?? "Failed to load history");
+        setErr(e instanceof Error ? e.message : String(e));
       }
     })();
     return () => {
@@ -103,8 +103,8 @@ export default function FXStrengthHistory() {
       grid: { left: 40, right: 20, top: 60, bottom: 40 },
       tooltip: {
         trigger: "axis",
-        valueFormatter: (v: any) =>
-          v == null ? "" : Number(v).toFixed(2),
+        valueFormatter: (v: unknown) =>
+          v == null ? "" : Number(v as number).toFixed(2),
       },
       legend: { show: false },
       xAxis: {

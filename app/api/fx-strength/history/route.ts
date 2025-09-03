@@ -7,7 +7,25 @@ type Pair = { base: string; quote: string; y: string };
 type Strength = Record<string, number>;
 
 const TTL_SECONDS = 600; // cache 10 min
-const memoryCache: Record<string, { ts: number; payload: any }> = {};
+
+type HistoryPayload = {
+  updated: string;
+  days: number;
+  dates: string[];
+  ccys: string[];
+  series: Record<string, (number | null)[]>;
+};
+
+const memoryCache: Record<string, { ts: number; payload: HistoryPayload }> = {};
+
+// Yahoo v8 chart response (minimal fields we use)
+type YQuote = { close?: (number | null)[] };
+type YResult = {
+  meta?: { regularMarketPrice?: number; chartPreviousClose?: number };
+  timestamp?: number[];
+  indicators?: { quote?: YQuote[] };
+};
+type YResp = { chart?: { result?: YResult[] } };
 
 const PAIRS: Pair[] = [
   { base: "EUR", quote: "USD", y: "EURUSD=X" },
@@ -55,22 +73,43 @@ const PAIRS: Pair[] = [
 ];
 
 // Which currencies to include in the history output (order is legend order)
-const CCYS = ["AUD","CAD","CHF","EUR","GBP","JPY","NZD","USD","SEK","NOK","SGD","HKD","CNH","MXN","ZAR"];
+const CCYS = [
+  "AUD",
+  "CAD",
+  "CHF",
+  "EUR",
+  "GBP",
+  "JPY",
+  "NZD",
+  "USD",
+  "SEK",
+  "NOK",
+  "SGD",
+  "HKD",
+  "CNH",
+  "MXN",
+  "ZAR",
+];
 
 /** ---------- Math ---------- */
 function zscore(values: number[]) {
   const mu = values.reduce((a, b) => a + b, 0) / Math.max(values.length, 1);
   const sd =
-    Math.sqrt(values.reduce((a, b) => a + (b - mu) * (b - mu), 0) / Math.max(values.length, 1)) || 1;
+    Math.sqrt(
+      values.reduce((a, b) => a + (b - mu) * (b - mu), 0) /
+        Math.max(values.length, 1)
+    ) || 1;
   return { mu, sd };
 }
 
-function computeStrengthFromPairs(pairReturns: Record<string, number>): Strength {
+function computeStrengthFromPairs(
+  pairReturns: Record<string, number>
+): Strength {
   const bucket: Record<string, number[]> = {};
   for (const p of PAIRS) {
     const r = pairReturns[p.y];
     if (!Number.isFinite(r)) continue;
-    (bucket[p.base] ||= []).push(r);   // base +r
+    (bucket[p.base] ||= []).push(r); // base +r
     (bucket[p.quote] ||= []).push(-r); // quote −r
   }
   const strengths: Strength = {};
@@ -80,7 +119,8 @@ function computeStrengthFromPairs(pairReturns: Record<string, number>): Strength
   }
   const vals = Object.values(strengths);
   const { mu, sd } = zscore(vals);
-  for (const k of Object.keys(strengths)) strengths[k] = (strengths[k] - mu) / sd;
+  for (const k of Object.keys(strengths))
+    strengths[k] = (strengths[k] - mu) / sd;
   return strengths;
 }
 
@@ -89,7 +129,9 @@ function computeStrengthFromPairs(pairReturns: Record<string, number>): Strength
 async function fetchDailyPairReturns(range = "6mo") {
   const out: Record<string, Record<string, number>> = {}; // sym -> date -> log ret
   const chunk = <T,>(arr: T[], n = 6) =>
-    Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, (i + 1) * n));
+    Array.from({ length: Math.ceil(arr.length / n) }, (_, i) =>
+      arr.slice(i * n, (i + 1) * n)
+    );
 
   for (const group of chunk(PAIRS, 6)) {
     await Promise.all(
@@ -107,21 +149,37 @@ async function fetchDailyPairReturns(range = "6mo") {
             cache: "no-store",
           });
           if (!res.ok) return;
-          const j: any = await res.json();
+          const j = (await res.json()) as YResp;
           const r = j?.chart?.result?.[0];
-          const close = r?.indicators?.quote?.[0]?.close as number[] | undefined;
-          const ts = r?.timestamp as number[] | undefined;
+          const close = r?.indicators?.quote?.[0]?.close;
+          const ts = r?.timestamp;
+
           if (!close || !ts || close.length < 2) return;
 
           const m: Record<string, number> = {};
           for (let i = 1; i < close.length; i++) {
-            const c = close[i], pclose = close[i - 1];
-            if (!Number.isFinite(c) || !Number.isFinite(pclose)) continue;
-            const dateISO = new Date(ts[i] * 1000).toISOString().slice(0, 10); // attribute return to this day’s close
-            m[dateISO] = Math.log(c / pclose);
+            const c = close[i];
+            const prev = close[i - 1];
+
+            // Narrow to finite numbers; close[] is (number|null)[]
+            if (
+              typeof c !== "number" ||
+              typeof prev !== "number" ||
+              !Number.isFinite(c) ||
+              !Number.isFinite(prev)
+            ) {
+              continue;
+            }
+
+            const dateISO = new Date(ts[i] * 1000)
+              .toISOString()
+              .slice(0, 10); // attribute return to this day’s close
+            m[dateISO] = Math.log(c / prev);
           }
           out[p.y] = m;
-        } catch {}
+        } catch {
+          // ignore a single pair failure
+        }
       })
     );
   }
@@ -132,7 +190,10 @@ async function fetchDailyPairReturns(range = "6mo") {
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const days = Math.max(5, Math.min(180, Number(searchParams.get("days") || "30"))); // 30 or 60 commonly
+    const days = Math.max(
+      5,
+      Math.min(180, Number(searchParams.get("days") || "30"))
+    ); // 30 or 60 commonly
 
     const cacheKey = `hist:${days}`;
     const cached = memoryCache[cacheKey];
@@ -145,9 +206,7 @@ export async function GET(req: Request) {
 
     // Build the union of dates, sort ascending
     const allDates = Array.from(
-      new Set(
-        Object.values(pairReturnsByDate).flatMap((m) => Object.keys(m))
-      )
+      new Set(Object.values(pairReturnsByDate).flatMap((m) => Object.keys(m)))
     ).sort(); // YYYY-MM-DD sorts lexicographically
 
     // Take the last N dates
@@ -155,36 +214,37 @@ export async function GET(req: Request) {
 
     // For each date, compute strengths (z-scored) from the pair returns available that day
     const dates: string[] = [];
-    const series: Record<string, number[]> = {};
+    const series: Record<string, (number | null)[]> = {};
     for (const c of CCYS) series[c] = [];
 
     for (const d of slice) {
       const pairRets: Record<string, number> = {};
       for (const p of PAIRS) {
         const r = pairReturnsByDate[p.y]?.[d];
-        if (Number.isFinite(r)) pairRets[p.y] = r!;
+        if (typeof r === "number" && Number.isFinite(r)) {
+          pairRets[p.y] = r;
+        }
       }
       const strengths = computeStrengthFromPairs(pairRets);
       dates.push(d);
-      for (const c of CCYS) series[c].push(
-        Number.isFinite(strengths[c]) ? strengths[c] : null as any
-      );
+      for (const c of CCYS) {
+        const s = strengths[c];
+        series[c].push(typeof s === "number" && Number.isFinite(s) ? s : null);
+      }
     }
 
-    const payload = {
+    const payload: HistoryPayload = {
       updated: new Date().toISOString(),
       days,
-      dates,          // e.g. ["2025-08-05", ...]
-      ccys: CCYS,     // order for legend
-      series,         // { USD: [z,...], EUR: [z,...], ... }
+      dates, // e.g. ["2025-08-05", ...]
+      ccys: CCYS, // order for legend
+      series, // { USD: [z,...], EUR: [z,...], ... }
     };
 
     memoryCache[cacheKey] = { ts: Date.now(), payload };
     return NextResponse.json(payload);
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: err?.message ?? "Failed to build FX strength history" },
-      { status: 502 }
-    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: message }, { status: 502 });
   }
 }

@@ -5,6 +5,7 @@ import ReactECharts from "echarts-for-react";
 import * as echarts from "echarts";
 import isoCountries from "i18n-iso-countries";
 import en from "i18n-iso-countries/langs/en.json";
+import type { FeatureCollection, Geometry } from "geojson";
 
 isoCountries.registerLocale(en);
 
@@ -18,6 +19,17 @@ type Api = {
   strengths: Record<string, number>;
   countries: CountryDatum[];
   ranking: RankRow[];
+};
+
+/** Minimal typing for the world.json we load */
+type WorldFeatureProps = { name?: string; ISO_A2?: string };
+type WorldFC = FeatureCollection<Geometry, WorldFeatureProps>;
+
+/** Tooltip param typing (only what we use) */
+type MapTipParams = {
+  name?: string;
+  region?: { properties?: { name?: string } };
+  data?: { currency?: string; value?: number };
 };
 
 // Names in world.json that don’t match ISO country names
@@ -82,18 +94,25 @@ export default function FXStrengthMapAndList() {
         }
         if (!res.ok) throw new Error(`world.json ${res.status}`);
 
-        const geo = await res.json();
-        if (geo?.features?.forEach) {
-          (geo.features as any[]).forEach((f: any) => {
-            const iso2 = nameToISO2(f?.properties?.name);
+        const geo = (await res.json()) as WorldFC;
+
+        if (Array.isArray(geo.features)) {
+          geo.features.forEach((f) => {
+            if (!f.properties) return;
+            const iso2 = nameToISO2(f.properties.name);
             if (iso2) f.properties.ISO_A2 = iso2;
           });
         }
+
         if (!echarts.getMap("world_iso")) {
-          echarts.registerMap("world_iso", geo);
+          // ECharts’ TS types expect “compressed” GeoJSON; plain GeoJSON works at runtime.
+          // This targeted expect-error avoids forcing `any` and keeps types strict elsewhere.
+          // @ts-expect-error ECharts accepts plain GeoJSON input here at runtime
+          echarts.registerMap("world_iso", { geoJSON: geo });
         }
         if (alive) setMapReady(true);
-      } catch (e) {
+      } catch (e: unknown) {
+        // eslint-disable-next-line no-console
         console.error("Failed to load/register world map", e);
         if (alive) setMapReady(false);
       }
@@ -124,9 +143,10 @@ export default function FXStrengthMapAndList() {
           setData(json);
           setApiError(null);
         }
-      } catch (e: any) {
+      } catch (e: unknown) {
+        // eslint-disable-next-line no-console
         console.error(e);
-        if (alive) setApiError(e?.message ?? "Failed to load data");
+        if (alive) setApiError(e instanceof Error ? e.message : String(e));
       }
     })();
     return () => {
@@ -135,31 +155,30 @@ export default function FXStrengthMapAndList() {
   }, [mode, index]);
 
   // Join by ISO2 (we set nameProperty: "ISO_A2" below)
-  const seriesData = useMemo(() => {
-    return (data?.countries ?? []).map((c) => ({
-      name: c.iso2,
-      value: c.strength,
-      currency: c.currency,
-    }));
-  }, [data]);
+  const seriesData = useMemo(
+    () =>
+      (data?.countries ?? []).map((c) => ({
+        name: c.iso2,
+        value: c.strength,
+        currency: c.currency,
+      })),
+    [data]
+  );
 
-  const option = useMemo(() => {
+  const option = useMemo<echarts.EChartsOption>(() => {
     return {
       backgroundColor: "transparent",
       tooltip: {
         trigger: "item",
-        formatter: (p: any) => {
-          const label =
-            p?.region?.properties?.name ||
-            p?.region?.name ||
-            p?.name ||
-            "";
+        formatter: (p: MapTipParams) => {
+          const label = p?.region?.properties?.name ?? p?.name ?? "";
           if (!p?.data) return label;
+          const val = p.data.value ?? 0;
           return `
             <div style="min-width:180px">
               <div><strong>${label}</strong></div>
-              <div>Currency: ${p.data.currency}</div>
-              <div>Strength (z): ${Number(p.data.value).toFixed(2)}</div>
+              <div>Currency: ${p.data.currency ?? "-"}</div>
+              <div>Strength (z): ${Number(val).toFixed(2)}</div>
             </div>
           `;
         },
@@ -172,11 +191,12 @@ export default function FXStrengthMapAndList() {
         text: ["Stronger", "Weaker"],
         calculable: true,
         inRange: {
-          color: ["#e60d0dff", "#f87171", "#f3f4f6", "#34d399", "#08644aff"],
-  },
-  // countries with no data
-  outOfRange: { color: "#e78b1383" },
-},
+          // low -> high mapping (red -> neutral-ish -> green)
+          color: ["#e60d0dff", "#f87171", "#d3ba15ff", "#34d399", "#08644aff"],
+        },
+        // countries with no data
+        outOfRange: { color: "#e78b1383" },
+      },
       series: [
         {
           type: "map",
