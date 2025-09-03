@@ -7,7 +7,7 @@ type Pair = { base: string; quote: string; y: string };
 type Strength = Record<string, number>;
 
 const TTL_SECONDS = 600; // cache 10 min
-let memoryCache: Record<string, { ts: number; payload: any }> = {};
+const memoryCache: Record<string, { ts: number; payload: any }> = {};
 
 const PAIRS: Pair[] = [
   { base: "EUR", quote: "USD", y: "EURUSD=X" },

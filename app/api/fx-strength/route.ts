@@ -9,7 +9,7 @@ type CountryDatum = { iso2: string; currency: string; strength: number };
 
 // ---------- Config ----------
 const TTL_SECONDS = 60;
-let memoryCache: Record<string, { payload: any; ts: number }> = {}; // keyed by cache key
+const memoryCache: Record<string, { payload: any; ts: number }> = {}; // keyed by cache key
 
 const PAIRS: Pair[] = [
   { base: "EUR", quote: "USD", y: "EURUSD=X" },
