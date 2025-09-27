@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+/* Keep dark mode */
+:root { color-scheme: dark; }
+html, body { height: 100%; }
+
+html,
+body {
+  height: 100%;
+}
+
+/* Force proper emoji font stack so flags render correctly */
+.emoji-flag {
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", system-ui, sans-serif !important;
+  font-variant-emoji: emoji;
+}

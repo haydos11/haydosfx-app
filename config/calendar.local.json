@@ -1,0 +1,18 @@
+{
+  "mt5DbPath": "C:\\Users\\hayde\\AppData\\Roaming\\MetaQuotes\\Terminal\\Common\\Files\\EconomicCalendar.db",
+  "apiUrl": "http://localhost:3000/api/calendar",
+  "batchSize": 1000,
+  "rescanDays": 70,
+  "since": 1442707200,
+  "until": null,
+  "countries": {
+    "keep": ["US","GB","EU","DE","FR","IT","JP","CA","CH","CN","AU","NZ"],
+    "exclude": ["BR","ZA","MX"]
+  },
+  "globals": {
+    "keywords": ["jackson hole","imf","world bank","wbg","g7","g20","bis","opec","symposium","eu summit","ecb forum"]
+  },
+  "holidays": {
+    "keywords": ["holiday","bank holiday","market holiday","public holiday"]
+  }
+}

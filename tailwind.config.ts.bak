@@ -1,0 +1,45 @@
+import type { Config } from "tailwindcss";
+
+const config: Config = {
+  darkMode: "class",
+  content: [
+    "./app/**/*.{ts,tsx}",
+    "./components/**/*.{ts,tsx}",
+    "./content/**/*.{md,mdx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        border: "hsl(215 16% 22%)",
+        input: "hsl(215 16% 22%)",
+        ring: "hsl(216 95% 58%)",
+        background: "hsl(222 47% 11%)",
+        foreground: "hsl(210 40% 98%)",
+        card: {
+          DEFAULT: "hsl(222 47% 13%)",
+          foreground: "hsl(210 40% 98%)",
+        },
+        muted: {
+          DEFAULT: "hsl(215 16% 17%)",
+          foreground: "hsl(215 20% 65%)",
+        },
+        accent: {
+          DEFAULT: "hsl(215 16% 17%)",
+          foreground: "hsl(210 40% 98%)",
+        },
+        destructive: {
+          DEFAULT: "hsl(0 84% 60%)",
+          foreground: "hsl(210 40% 98%)",
+        },
+        success: "hsl(142 70% 45%)",
+        warn: "hsl(38 92% 50%)",
+      },
+      borderRadius: {
+        xl: "0.8rem",
+        "2xl": "1.2rem",
+      },
+    },
+  },
+  plugins: [],
+};
+export default config;
