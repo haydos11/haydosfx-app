@@ -1,8 +1,8 @@
 import { checkAuth } from "../../_lib/auth";
+import { supabaseAdmin } from "../../../../../lib/db/supabase-admin";
 
 export const runtime = "nodejs";
 
-// MT5 country payload
 type Country = {
   id: number;
   name: string;
@@ -12,22 +12,23 @@ type Country = {
   url_name?: string | null;
 };
 
+type CountriesBody = { countries?: unknown };
+
+function isString(x: unknown): x is string { return typeof x === "string"; }
+function isNumber(x: unknown): x is number { return typeof x === "number" && Number.isFinite(x); }
+
 function isCountry(x: unknown): x is Country {
   if (typeof x !== "object" || x === null) return false;
   const o = x as Record<string, unknown>;
   return (
-    typeof o.id === "number" &&
-    typeof o.name === "string" &&
-    typeof o.code === "string" &&
-    typeof o.currency === "string" &&
-    typeof o.currency_symbol === "string" &&
-    (o.url_name === undefined ||
-      o.url_name === null ||
-      typeof o.url_name === "string")
+    isNumber(o.id) &&
+    isString(o.name) &&
+    isString(o.code) &&
+    isString(o.currency) &&
+    isString(o.currency_symbol) &&
+    (o.url_name === undefined || o.url_name === null || isString(o.url_name))
   );
 }
-
-type CountriesBody = { countries?: unknown };
 
 export async function POST(req: Request) {
   const auth = checkAuth(req);
@@ -40,13 +41,25 @@ export async function POST(req: Request) {
     return new Response("Invalid JSON", { status: 400 });
   }
 
-  const input = Array.isArray(body.countries) ? body.countries : [];
-  const countries: Country[] = input.filter(isCountry);
+  const raw = Array.isArray(body.countries) ? body.countries : [];
+  const rows: Country[] = raw.filter(isCountry);
 
-  // TODO: upsert `countries` into your DB
+  if (rows.length === 0) {
+    return Response.json({ message: "countries upsert ok", summary: { total: 0, created: 0, updated: 0 } });
+  }
+
+  // Upsert by primary key `id`
+  const { data, error } = await supabaseAdmin
+    .from("calendar_countries")
+    .upsert(rows, { onConflict: "id" })
+    .select("id");
+
+  if (error) {
+    return Response.json({ message: "db error", details: error.message }, { status: 500 });
+  }
 
   return Response.json({
     message: "countries upsert ok",
-    summary: { total: countries.length, created: 0, updated: 0 },
+    summary: { total: rows.length, created: 0, updated: data?.length ?? 0 },
   });
 }
