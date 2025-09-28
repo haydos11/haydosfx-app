@@ -10,7 +10,7 @@ type Value = {
   period: number;               // epoch seconds
   revision: number;
   impact_type: number;
-  actual_value: number | null;          // ppm long or null
+  actual_value: number | null;
   prev_value: number | null;
   revised_prev_value: number | null;
   forecast_value: number | null;
@@ -24,7 +24,6 @@ function isFiniteOrNull(x: unknown): x is number | null {
 function isFiniteNum(x: unknown): x is number {
   return typeof x === "number" && Number.isFinite(x);
 }
-
 function isValue(x: unknown): x is Value {
   if (typeof x !== "object" || x === null) return false;
   const o = x as Record<string, unknown>;
@@ -60,10 +59,10 @@ export async function POST(req: Request) {
     return Response.json({ message: "values upsert ok", summary: { total: 0, created: 0, updated: 0 } });
   }
 
-  // Upsert on `id` (Value IDs are unique in MT5)
+  // 🔑 Upsert using the same uniqueness as your DB constraint: (event_id, time)
   const { data, error } = await supabaseAdmin
     .from("calendar_values")
-    .upsert(rows, { onConflict: "id" })
+    .upsert(rows, { onConflict: "event_id,time" })
     .select("id");
 
   if (error) {
