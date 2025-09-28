@@ -95,7 +95,7 @@ export async function POST(req: Request) {
 
   // Ensure table name matches your schema: `events`
   const { data, error } = await supabaseAdmin
-    .from("events")
+    .from("calendar_events")
     .upsert(rows, { onConflict: "id" })
     .select("id");
 
