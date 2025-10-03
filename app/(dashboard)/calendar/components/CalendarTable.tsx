@@ -1,5 +1,6 @@
 // app/(dashboard)/calendar/components/CalendarTable.tsx
 "use client";
+
 import * as React from "react";
 import type { CalendarEventRow } from "../types";
 import { Icon } from "@iconify/react";
@@ -10,8 +11,10 @@ type Props = {
   error?: string | null;
   /** UTC offset in hours (can be fractional like 9.5) */
   timeOffsetHours?: number;
-  /** Optional row click handler (e.g., open details drawer) */
+  /** Optional row click handler (e.g., open details drawer with the full row) */
   onSelect?: (row: CalendarEventRow) => void;
+  /** Preferred: callback with the event_id to open the drawer */
+  onSelectEvent?: (eventId: number) => void;
 };
 
 /* ---------- helper types ---------- */
@@ -30,6 +33,7 @@ type WithRevisedPrev = {
   previous_revised?: number | null;
   prev_revised?: number | null;
 };
+
 type EnrichedRow = CalendarEventRow &
   Partial<Multiplierish & Unitish & Countryish & WithRevisedPrev>;
 
@@ -180,8 +184,37 @@ function arrow(
   forecast?: number | null
 ): { glyph: "" | "↑" | "↓"; cls: string } {
   if (!isNum(actual)) return { glyph: "", cls: "" };
-  const up = actual > (isNum(forecast) ? forecast : 0);
+  const up = isNum(forecast) ? actual > forecast : actual > 0;
   return up ? { glyph: "↑", cls: "text-emerald-300" } : { glyph: "↓", cls: "text-rose-300" };
+}
+
+/* ---------------- event id resolver (no ts-comments) ---------------- */
+type IdFields = Partial<{
+  event_id: number | string | null;
+  eventCode: number | string | null;
+  event: number | string | null;
+  event_code: number | string | null;
+  eventId: number | string | null;
+}>;
+
+function resolveEventId(row: CalendarEventRow): number | null {
+  const r = row as unknown as IdFields;
+  const maybe =
+    r.event_id ??
+    r.eventCode ??
+    r.event ??
+    r.event_code ??
+    r.eventId ??
+    null;
+
+  const n =
+    typeof maybe === "number"
+      ? maybe
+      : typeof maybe === "string"
+      ? Number(maybe)
+      : NaN;
+
+  return Number.isFinite(n) ? (n as number) : null;
 }
 
 /* ----- no JSX namespace: typed to React.ReactElement ----- */
@@ -202,10 +235,9 @@ function PreviousWithRevision(props: {
 
   const delta = (revised as number) - (prev as number);
   const up = delta > 0;
-  const tone =
-    up
-      ? "text-emerald-300 ring-emerald-500/25 bg-emerald-600/10"
-      : "text-rose-300 ring-rose-500/25 bg-rose-600/10";
+  const tone = up
+    ? "text-emerald-300 ring-emerald-500/25 bg-emerald-600/10"
+    : "text-rose-300 ring-rose-500/25 bg-rose-600/10";
 
   return (
     <div className="flex items-center gap-2">
@@ -227,6 +259,7 @@ export default function CalendarTable({
   error,
   timeOffsetHours = 0,
   onSelect,
+  onSelectEvent,
 }: Props): React.ReactElement {
   if (loading) {
     return (
@@ -259,8 +292,6 @@ export default function CalendarTable({
   const dayKeys = Object.keys(groups).sort();
 
   const tzSuffix = formatUtcOffset(timeOffsetHours);
-
-  // If viewer is in London, show BST/GMT tag next to the UTC label for consistency
   const viewerZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const tag = viewerZone === "Europe/London" ? (isLondonDSTNow() ? "BST" : "GMT") : null;
   const tzHeader = `${tzSuffix}${tag ? ` • ${tag}` : ""}`;
@@ -318,11 +349,23 @@ export default function CalendarTable({
                       e.prev_revised ??
                       null;
 
+                    // Resolve the event id for the drawer
+                    const eventId = resolveEventId(e);
+                    const handleClick = () => {
+                      if (eventId != null && onSelectEvent) {
+                        onSelectEvent(eventId); // preferred: pass event_id
+                      } else {
+                        onSelect?.(e); // fallback: pass the whole row
+                      }
+                    };
+
                     return (
                       <tr
                         key={e.id}
-                        onClick={() => onSelect?.(e)}
+                        onClick={handleClick}
                         className="group cursor-pointer border-t border-white/10 hover:bg-white/[0.04] transition-colors"
+                        title={eventId == null ? "No event_id on this row" : `event_id=${eventId}`}
+                        data-event-id={eventId ?? undefined}
                       >
                         <td className="px-3 py-3 tabular-nums text-slate-200">
                           {fmtTimeOffset(e.occurs_at, timeOffsetHours)}

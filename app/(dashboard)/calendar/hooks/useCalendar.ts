@@ -53,7 +53,7 @@ type ResultRow = {
   country: string;           // alias of country_code
   title: string;             // alias of event_name
   event_code: number;        // alias of event_id (in your view)
-  occurs_at: string;         // alias of release_time_utc
+  occurs_at: string | number | Date; // alias of release_time_utc
   importance: number;        // alias of importance_enum
   actual: number | null;     // alias of actual_scaled
   forecast: number | null;   // alias of forecast_scaled
@@ -70,47 +70,26 @@ const aliasCountry = (cc: string) => {
   return m;
 };
 
-const ENUM_TO_TEXT: Record<number, string> = {
-  0: "None",
-  1: "Low",
-  2: "Moderate",
-  3: "High",
-};
-const TEXT_TO_ENUM: Record<string, number> = {
-  none: 0,
-  low: 1,
-  moderate: 2,
-  high: 3,
-};
+const ENUM_TO_TEXT: Record<number, string> = { 0: "None", 1: "Low", 2: "Moderate", 3: "High" };
+const TEXT_TO_ENUM: Record<string, number> = { none: 0, low: 1, moderate: 2, high: 3 };
 
-/** Accepts strings like:
- *  "US,GB,EU | sector=Prices,Jobs | impact=2,3"
- *  or "US,GB | sector=GDP | impact=High,Moderate"
- */
 function parseFilters(encoded?: string) {
   const out = {
     countries: [] as string[],
-    sectors: [] as string[],         // sector_text values
-    impactEnums: [] as number[],     // 1/2/3 (exclude 0 unless explicitly chosen)
-    impactTexts: [] as string[],     // "Low"/"Moderate"/"High"
+    sectors: [] as string[],
+    impactEnums: [] as number[],
+    impactTexts: [] as string[],
   };
   if (!encoded || !encoded.trim()) return out;
 
   const parts = encoded.split("|").map((s) => s.trim()).filter(Boolean);
-
-  // pull k=v segments
   const getVal = (k: string) =>
-    parts
-      .find((p) => new RegExp(`^${k}\\s*=`, "i").test(p))
-      ?.split("=")[1]
-      ?.trim();
+    parts.find((p) => new RegExp(`^${k}\\s*=`, "i").test(p))?.split("=")[1]?.trim();
 
   const sectorsPart = getVal("sector");
   const impactPart = getVal("impact");
 
-  if (sectorsPart) {
-    out.sectors = sectorsPart.split(",").map((s) => s.trim()).filter(Boolean);
-  }
+  if (sectorsPart) out.sectors = sectorsPart.split(",").map((s) => s.trim()).filter(Boolean);
 
   if (impactPart) {
     const tokens = impactPart.split(",").map((s) => s.trim()).filter(Boolean);
@@ -132,7 +111,6 @@ function parseFilters(encoded?: string) {
     out.impactTexts = Array.from(new Set(out.impactTexts));
   }
 
-  // countries = everything else once k=v parts are stripped
   const countryPart = encoded
     .replace(/(?:^|\|)\s*sector=[^|]*/gi, "")
     .replace(/(?:^|\|)\s*impact=[^|]*/gi, "")
@@ -140,16 +118,10 @@ function parseFilters(encoded?: string) {
     .trim();
 
   if (countryPart) {
-    out.countries = countryPart
-      .split(",")
-      .map(aliasCountry)
-      .filter(Boolean);
+    out.countries = countryPart.split(",").map(aliasCountry).filter(Boolean);
   }
   out.countries = Array.from(new Set(out.countries));
-
-  // Exclude None unless explicitly chosen
   out.impactEnums = out.impactEnums.filter((n) => n !== 0);
-
   return out;
 }
 
@@ -157,6 +129,22 @@ function endExclusiveISO(end: string) {
   const d = new Date(`${end}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
+}
+
+/** Normalize any DB value into a **real UTC ISO** string */
+function normalizeUtcIso(val: string | number | Date): string {
+  if (typeof val === "number") {
+    const ms = val < 1e12 ? val * 1000 : val;
+    return new Date(ms).toISOString();
+  }
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === "string") {
+    // contains Z or explicit offset?
+    if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(val)) return new Date(val).toISOString();
+    // naive string -> treat as UTC (legacy tolerance)
+    return new Date(val.replace(" ", "T") + "Z").toISOString();
+  }
+  return new Date().toISOString();
 }
 
 /* ------------------- useCalendar (list) ------------------- */
@@ -169,19 +157,12 @@ export function useCalendar(params: Params) {
   const parsed = useMemo(() => parseFilters(params.country), [params.country]);
   const { countries, sectors, impactEnums, impactTexts } = parsed;
 
-  const [data, setData] = useState<{
-    items: CalendarEventRow[];
-    total: number;
-    page: number;
-    pageSize: number;
-  } | null>(null);
-
+  const [data, setData] = useState<{ items: CalendarEventRow[]; total: number; page: number; pageSize: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-
     async function run() {
       setLoading(true);
       setError(null);
@@ -212,11 +193,8 @@ export function useCalendar(params: Params) {
           .order("release_time_utc", { ascending: false })
           .range(from, to);
 
-        // Countries -> country_code
         if (countries.length) q = q.in("country_code", countries);
-        // Sector -> sector_text
         if (sectors.length) q = q.in("sector_text", sectors);
-        // Impact -> enum preferred; fallback text
         if (impactEnums.length) q = q.in("importance_enum", impactEnums);
         else if (impactTexts.length) q = q.in("importance_text", impactTexts);
 
@@ -225,14 +203,13 @@ export function useCalendar(params: Params) {
 
         const items: CalendarEventRow[] = (rows ?? []).map((r) => ({
           ...r,
-          event_code: String(r.event_code), // keep as string for UI safety
-          created_at: r.occurs_at ?? new Date().toISOString(),
-          updated_at: r.occurs_at ?? new Date().toISOString(),
+          occurs_at: normalizeUtcIso(r.occurs_at),
+          event_code: String(r.event_code),
+          created_at: normalizeUtcIso(r.occurs_at),
+          updated_at: normalizeUtcIso(r.occurs_at),
         }));
 
-        if (!cancelled) {
-          setData({ items, total: count ?? 0, page, pageSize });
-        }
+        if (!cancelled) setData({ items, total: count ?? 0, page, pageSize });
       } catch (e: unknown) {
         if (!cancelled) setError(e instanceof Error ? e.message : "error");
       } finally {
@@ -241,29 +218,15 @@ export function useCalendar(params: Params) {
     }
 
     run();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    // primitives
-    params.start,
-    params.end,
-    page,
-    pageSize,
-    from,
-    to,
-    // arrays actually read inside the effect
-    countries,
-    sectors,
-    impactEnums,
-    impactTexts,
-  ]);
+    return () => { cancelled = true; };
+  }, [params.start, params.end, page, pageSize, from, to, countries, sectors, impactEnums, impactTexts]);
 
   return { data, loading, error };
 }
 
 /* =========================================================
-   useCalendarEvent(eventIdOrCode) — powers the side drawer
+   useCalendarEvent(eventId) — powers the side drawer
+   IMPORTANT: expects an **event_id** (calendar_events.id)
 ========================================================= */
 type EventsTableRow = {
   id: number;
@@ -301,62 +264,36 @@ export function useCalendarEvent(eventId: number | string | null) {
     let cancel = false;
 
     async function run() {
-      if (eventId == null || eventId === "") return;
+      if (eventId == null || eventId === "") { setData(null); return; }
       setLoading(true);
       setError(null);
 
       try {
         const idNum = Number(eventId);
-        const looksNumeric = Number.isFinite(idNum);
+        if (!Number.isFinite(idNum)) throw new Error("Drawer requires event_id (number)");
 
-        // ---- 1) Resolve core by id OR by event_code (SINGLE ROW) ----
-        let ev: EventsTableRow | null = null;
-
-        if (looksNumeric) {
-          const r1 = await supabase
-            .from("calendar_events")
-            .select(
-              `
-                id,
-                event_code,
-                title,
-                country_id,
-                sector_text,
-                importance_enum,
-                unit_text,
-                source_url
-              `
-            )
-            .eq("id", idNum)
-            .maybeSingle();
-          if (r1.error) throw new Error(r1.error.message);
-          ev = (r1.data as EventsTableRow) ?? null;
-        }
-
-        if (!ev) {
-          const r2 = await supabase
-            .from("calendar_events")
-            .select(
-              `
-                id,
-                event_code,
-                title,
-                country_id,
-                sector_text,
-                importance_enum,
-                unit_text,
-                source_url
-              `
-            )
-            .eq("event_code", looksNumeric ? idNum : String(eventId))
-            .maybeSingle();
-          if (r2.error) throw new Error(r2.error.message);
-          ev = (r2.data as EventsTableRow) ?? ev;
-        }
-
+        // ---- 1) Core event metadata (by id) ----
+        const r1 = await supabase
+          .from("calendar_events")
+          .select(
+            `
+              id,
+              event_code,
+              title,
+              country_id,
+              sector_text,
+              importance_enum,
+              unit_text,
+              source_url
+            `
+          )
+          .eq("id", idNum)
+          .maybeSingle();
+        if (r1.error) throw new Error(r1.error.message);
+        const ev = (r1.data as EventsTableRow) ?? null;
         if (!ev) throw new Error("Event not found");
 
-        // ---- 1b) Country info (SINGLE ROW) ---------------------------
+        // ---- 1b) Country info ----
         let countryCode: string | undefined;
         let currencyCode: string | undefined;
         if (ev.country_id != null) {
@@ -383,7 +320,7 @@ export function useCalendarEvent(eventId: number | string | null) {
           source_url: ev.source_url ?? null,
         };
 
-        // ---- 2) History from 'calendar_values_human' (ARRAY) ---------
+        // ---- 2) History for this event_id ----
         const vq = await supabase
           .from("calendar_values_human")
           .select(
@@ -400,15 +337,16 @@ export function useCalendarEvent(eventId: number | string | null) {
           )
           .eq("event_id", core.event_id)
           .order("release_time_utc", { ascending: false })
-          .limit(200)
+          .limit(500)
           .returns<ValuesHumanRow[]>();
-
         if (vq.error) throw new Error(vq.error.message);
 
         const history: EventPoint[] = (vq.data ?? []).map((v: ValuesHumanRow) => {
           let iso = "";
           if (typeof v.release_time_utc === "string") {
-            iso = v.release_time_utc;
+            iso = /[zZ]|[+-]\d{2}:?\d{2}$/.test(v.release_time_utc)
+              ? new Date(v.release_time_utc).toISOString()
+              : new Date(String(v.release_time_utc).replace(" ", "T") + "Z").toISOString();
           } else if (v.release_time_utc instanceof Date) {
             iso = v.release_time_utc.toISOString();
           } else {
@@ -428,9 +366,16 @@ export function useCalendarEvent(eventId: number | string | null) {
           };
         });
 
-        const latest = history[0] ?? null;
+        const latest =
+          history.find(
+            (h) =>
+              h.actual_value != null ||
+              h.forecast_value != null ||
+              h.previous_value != null ||
+              h.revised_prev_value != null
+          ) ?? history[0] ?? null;
 
-        // ---- 3) Next scheduled time from raw table (SINGLE ROW) ------
+        // ---- 3) Next scheduled time (future from raw table) ----
         const isoNow = new Date().toISOString();
         const nextQ = await supabase
           .from("calendar_values")
@@ -440,13 +385,16 @@ export function useCalendarEvent(eventId: number | string | null) {
           .order("release_time_utc", { ascending: true })
           .limit(1)
           .maybeSingle();
-
         if (nextQ.error) throw new Error(nextQ.error.message);
+
+        type NextRow = { release_time_utc?: string | number } | null;
+        const nextRow = nextQ.data as NextRow;
+        const nextVal = nextRow?.release_time_utc;
 
         const payload: EventPayload = {
           core,
           latest,
-          next_time_utc: (nextQ.data as { release_time_utc?: string } | null)?.release_time_utc ?? null,
+          next_time_utc: nextVal != null ? normalizeUtcIso(nextVal) : null,
           history,
         };
 
@@ -459,9 +407,7 @@ export function useCalendarEvent(eventId: number | string | null) {
     }
 
     run();
-    return () => {
-      cancel = true;
-    };
+    return () => { cancel = true; };
   }, [eventId]);
 
   return { data, loading, error };

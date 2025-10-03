@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const MAIN = [
-  { href: "/currency-strength", label: "Currencies" },
+  { href: "/currency-strength", label: "Currency Strength" }, // existing page
+  { href: "/currencies",        label: "Currency Charts" },   // NEW chart panel route
   { href: "/cot",               label: "COT Report" },
   { href: "/economy",           label: "Economy" },
   { href: "/calendar",          label: "Calendar" },

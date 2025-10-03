@@ -295,73 +295,59 @@ function detectLocalOffset(): number {
   try {
     const parts = new Intl.DateTimeFormat(undefined, { timeZoneName: "shortOffset" }).formatToParts(new Date());
     const raw = parts.find(p => p.type === "timeZoneName")?.value || ""; // e.g. "GMT+9:30"
-    const m = raw.match(/([+-]\d{1,2})(?::(\d{2}))?/); // +H or +H:MM
+    const m = raw.match(/([+-]\d{1,2})(?::(\d{2}))?/);
     if (m) {
       const h = parseInt(m[1], 10);
       const min = m[2] ? parseInt(m[2], 10) : 0;
-      const frac = min >= 30 ? 0.5 : 0; // we’re supporting :30 in UI
+      const frac = min >= 30 ? 0.5 : 0;
       const val = h + frac;
-      const snapped = Math.round(val * 2) / 2; // snap to nearest half-hour
+      const snapped = Math.round(val * 2) / 2;
       return Math.max(-12, Math.min(14, snapped));
     }
   } catch {
     /* noop */
   }
-  const hours = -new Date().getTimezoneOffset() / 60; // UTC - local -> negate
+  const hours = -new Date().getTimezoneOffset() / 60;
   const snapped = Math.round(hours * 2) / 2;
   return Math.max(-12, Math.min(14, snapped));
 }
 
-// Order: negatives first, then 0, then positives; includes popular half-hour zones
+// Neutral labels to avoid “Berlin vs London” confusion
 const TZ_ALL: TZOpt[] = [
-  { value: -12,  label: "Baker Island" },
-  { value: -11,  label: "Pago Pago" },
-  { value: -10,  label: "Honolulu" },
-  { value: -9,   label: "Anchorage" },
-  { value: -8,   label: "Los Angeles" },
-  { value: -7,   label: "Denver" },
-  { value: -6,   label: "Chicago" },
-  { value: -5,   label: "New York" },
-  { value: -4,   label: "Santiago" },
-  { value: -3.5, label: "St. John’s" },     // Newfoundland (UTC−3:30)
-  { value: -3,   label: "Buenos Aires" },
-  { value: -2,   label: "South Georgia" },
-  { value: -1,   label: "Azores" },
-  { value: 0,    label: "London" },
-  { value: 1,    label: "Berlin" },
-  { value: 2,    label: "Athens" },
-  { value: 3,    label: "Moscow" },
-  { value: 3.5,  label: "Tehran" },         // UTC+3:30
-  { value: 4,    label: "Dubai" },
-  { value: 4.5,  label: "Kabul" },          // UTC+4:30
-  { value: 5,    label: "Karachi" },
-  { value: 5.5,  label: "New Delhi" },      // UTC+5:30
-  { value: 6,    label: "Dhaka" },
-  { value: 6.5,  label: "Yangon" },         // UTC+6:30
-  { value: 7,    label: "Bangkok" },
-  { value: 8,    label: "Singapore" },
-  { value: 9,    label: "Tokyo" },
-  { value: 9.5,  label: "Adelaide" },       // UTC+9:30
-  { value: 10,   label: "Sydney" },
-  { value: 11,   label: "Nouméa" },
-  { value: 12,   label: "Auckland" },
-  { value: 13,   label: "Nukuʻalofa" },
-  { value: 14,   label: "Kiritimati" },
+  { value: -12,  label: "UTC−12" },
+  { value: -11,  label: "UTC−11" },
+  { value: -10,  label: "UTC−10" },
+  { value: -9,   label: "UTC−9"  },
+  { value: -8,   label: "UTC−8"  },
+  { value: -7,   label: "UTC−7"  },
+  { value: -6,   label: "UTC−6"  },
+  { value: -5,   label: "UTC−5"  },
+  { value: -4,   label: "UTC−4"  },
+  { value: -3.5, label: "UTC−3:30" },
+  { value: -3,   label: "UTC−3"  },
+  { value: -2,   label: "UTC−2"  },
+  { value: -1,   label: "UTC−1"  },
+  { value: 0,    label: "UTC±0"  },
+  { value: 1,    label: "UTC+1"  },
+  { value: 2,    label: "UTC+2"  },
+  { value: 3,    label: "UTC+3"  },
+  { value: 3.5,  label: "UTC+3:30" },
+  { value: 4,    label: "UTC+4"  },
+  { value: 4.5,  label: "UTC+4:30" },
+  { value: 5,    label: "UTC+5"  },
+  { value: 5.5,  label: "UTC+5:30" },
+  { value: 6,    label: "UTC+6"  },
+  { value: 6.5,  label: "UTC+6:30" },
+  { value: 7,    label: "UTC+7"  },
+  { value: 8,    label: "UTC+8"  },
+  { value: 9,    label: "UTC+9"  },
+  { value: 9.5,  label: "UTC+9:30" },
+  { value: 10,   label: "UTC+10" },
+  { value: 11,   label: "UTC+11" },
+  { value: 12,   label: "UTC+12" },
+  { value: 13,   label: "UTC+13" },
+  { value: 14,   label: "UTC+14" },
 ];
-
-function isLondonDSTNow(): boolean {
-  try {
-    const name = new Intl.DateTimeFormat("en-GB", {
-      timeZone: "Europe/London",
-      timeZoneName: "short",
-    })
-      .formatToParts(new Date())
-      .find((p) => p.type === "timeZoneName")?.value || "";
-    return /BST/i.test(name);
-  } catch {
-    return false;
-  }
-}
 
 function TimezoneSelect({
   value,
@@ -374,7 +360,6 @@ function TimezoneSelect({
   const popRef = useClickAway<HTMLDivElement>(() => setOpen(false));
   const zeroRef = useRef<HTMLButtonElement | null>(null);
 
-  // When opening, center the list around UTC+0 (per your preference)
   useEffect(() => {
     if (open && zeroRef.current) zeroRef.current.scrollIntoView({ block: "center" });
   }, [open]);
@@ -388,7 +373,7 @@ function TimezoneSelect({
         className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-[#0c0c0c] px-3 py-2 text-sm text-slate-200 hover:bg-white/[0.04] transition"
       >
         <span className="inline-block h-2 w-2 rounded-full bg-gradient-to-r from-indigo-400 via-fuchsia-400 to-emerald-400" />
-        <span>{`${formatUtcOffset(current.value)} — ${current.label}`}</span>
+        <span>{`${current.label}`}</span>
         <svg
           className={`h-3 w-3 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`}
           viewBox="0 0 20 20" fill="currentColor"
@@ -398,7 +383,7 @@ function TimezoneSelect({
       </button>
 
       {open && (
-        <div className="absolute z-30 mt-2 w-[280px] rounded-2xl border border-white/10 bg-[#0c0c0c]/95 p-2 shadow-2xl backdrop-blur">
+        <div className="absolute z-30 mt-2 w-[220px] rounded-2xl border border-white/10 bg-[#0c0c0c]/95 p-2 shadow-2xl backdrop-blur">
           <div className="max-h-64 overflow-auto">
             {TZ_ALL.map((opt) => {
               const selected = opt.value === value;
@@ -414,7 +399,7 @@ function TimezoneSelect({
                     setOpen(false);
                   }}
                 >
-                  <span>{`${formatUtcOffset(opt.value)} — ${opt.label}`}</span>
+                  <span>{opt.label}</span>
                   {selected ? <span className="text-emerald-300 text-xs">✓</span> : null}
                 </button>
               );
@@ -458,11 +443,9 @@ export default function CalendarClient() {
     { value: "SG", label: "Singapore (SGD)" },
     { value: "KR", label: "South Korea (KRW)" },
   ];
-  // G9 FX preset (EU, US, GB, JP, CA, AU, NZ, CH, CN)
   const G9_FX = ["EU", "US", "GB", "JP", "CA", "AU", "NZ", "CH", "CN"];
   const [countriesSel, setCountriesSel] = useState<string[]>(G9_FX);
 
-  /* Sector names (align to your DB’s sector_text) */
   const SECTOR_OPTIONS: Option[] = [
     { value: "Market", label: "Market" },
     { value: "GDP", label: "GDP" },
@@ -479,7 +462,6 @@ export default function CalendarClient() {
   ];
   const [sectorsSel, setSectorsSel] = useState<string[]>([]);
 
-  /* Importance (use your importance_enum/text) */
   const IMPACT_OPTIONS: Option[] = [
     { value: "1", label: "Low" },
     { value: "2", label: "Moderate" },
@@ -487,7 +469,6 @@ export default function CalendarClient() {
   ];
   const [impactSel, setImpactSel] = useState<string[]>([]);
 
-  /* Encode filters into single `country` string (keeps hook/API unchanged for now) */
   const encodedCountry = useMemo(() => {
     const parts: string[] = [];
     if (countriesSel.length) parts.push(countriesSel.join(","));
@@ -549,18 +530,12 @@ export default function CalendarClient() {
     setPage(1);
   };
 
-  // Viewer location & BST/GMT tag for subtitle
-  const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const isViewerLondon = localZone === "Europe/London";
-  const londonTag = isViewerLondon ? (isLondonDSTNow() ? "BST" : "GMT") : null;
-
-  /* -------- Drawer state (uses event_code from table rows) -------- */
+  /* -------- Drawer state -------- */
   const [drawer, setDrawer] = useState<{ open: boolean; eventId: number | null }>({
     open: false,
     eventId: null,
   });
 
-  // Accepts the row from CalendarTable; also tolerates extra id fields if present.
   type ExtraIdFields = Partial<{ event_id: number | string | null; eventId: number | string | null }>;
   function handleSelect(row: CalendarEventRow) {
     const extras = row as unknown as ExtraIdFields;
@@ -581,7 +556,6 @@ export default function CalendarClient() {
       <h1 className="text-2xl font-semibold text-slate-100">Economic Calendar</h1>
       <p className="mt-1 text-xs text-slate-400">
         Times shown in {formatUtcOffset(tzOffset)}
-        {londonTag ? ` (${londonTag})` : ""} — London
       </p>
 
       {/* Controls */}
@@ -614,54 +588,12 @@ export default function CalendarClient() {
                 />
 
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Pill
-                    onClick={() => {
-                      setToday();
-                      setOpen(false);
-                    }}
-                  >
-                    Today
-                  </Pill>
-                  <Pill
-                    onClick={() => {
-                      setLastWeek();
-                      setOpen(false);
-                    }}
-                  >
-                    Last week
-                  </Pill>
-                  <Pill
-                    onClick={() => {
-                      setThisWeek();
-                      setOpen(false);
-                    }}
-                  >
-                    This week
-                  </Pill>
-                  <Pill
-                    onClick={() => {
-                      setNextWeek();
-                      setOpen(false);
-                    }}
-                  >
-                    Next week
-                  </Pill>
-                  <Pill
-                    onClick={() => {
-                      setThisMonth();
-                      setOpen(false);
-                    }}
-                  >
-                    This month
-                  </Pill>
-                  <Pill
-                    onClick={() => {
-                      setNextMonth();
-                      setOpen(false);
-                    }}
-                  >
-                    Next month
-                  </Pill>
+                  <Pill onClick={() => { setToday(); setOpen(false); }}>Today</Pill>
+                  <Pill onClick={() => { setLastWeek(); setOpen(false); }}>Last week</Pill>
+                  <Pill onClick={() => { setThisWeek(); setOpen(false); }}>This week</Pill>
+                  <Pill onClick={() => { setNextWeek(); setOpen(false); }}>Next week</Pill>
+                  <Pill onClick={() => { setThisMonth(); setOpen(false); }}>This month</Pill>
+                  <Pill onClick={() => { setNextMonth(); setOpen(false); }}>Next month</Pill>
                 </div>
 
                 <div className="mt-4 flex justify-end">
@@ -750,7 +682,6 @@ export default function CalendarClient() {
         loading={loading}
         error={error}
         timeOffsetHours={tzOffset}
-        // rows call onSelect(row) to open the drawer
         onSelect={handleSelect}
       />
 
@@ -777,7 +708,7 @@ export default function CalendarClient() {
         </div>
       </div>
 
-      {/* Drawer (hook-powered) */}
+      {/* Drawer */}
       <CalendarEventDrawer
         open={drawer.open}
         eventId={drawer.eventId}
