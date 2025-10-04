@@ -18,6 +18,27 @@ function stableCode(ev: IngestEvent): string {
   return "auto_" + crypto.createHash("sha1").update(base).digest("hex");
 }
 
+/** Convert any date-like to epoch seconds (rounded down). */
+function toEpochSeconds(d: string | number | Date): number {
+  if (typeof d === "number") {
+    const ms = d < 1e12 ? d * 1000 : d;
+    return Math.floor(ms / 1000);
+  }
+  const ms = new Date(d).getTime();
+  return Math.floor(ms / 1000);
+}
+
+/** Turn a DB 'release_time_utc' (bigint seconds OR ISO/timestamp) into ISO string. */
+function fromDbReleaseToISO(x: number | string | Date): string {
+  if (typeof x === "number") {
+    const ms = x < 1e12 ? x * 1000 : x; // seconds → ms (or already ms)
+    return new Date(ms).toISOString();
+  }
+  if (x instanceof Date) return x.toISOString();
+  // string path (timestamp/ISO) → ISO
+  return new Date(x).toISOString();
+}
+
 /* =========================================================
    Upsert “event metadata” (unchanged behavior)
 ========================================================= */
@@ -66,35 +87,44 @@ export async function upsertCalendarEvents(raw: IngestEvent[]) {
 }
 
 /* =========================================================
-   Query from the “human” view (typed, no any)
-   View columns assumed (rename if your view differs):
-   - id
-   - release_time_utc
-   - country_code
-   - event_name
-   - impact_enum, importance_enum
-   - actual_num, forecast_num, previous_num
-   - revised_prev_value, revised_previous_num
-   - unit_text
-   - multiplier_suffix (ignored)
-   - event_code (optional; if absent we fallback to id)
+   Query directly from base tables (no view)
+   Tables/columns assumed:
+   - calendar_values:
+       id, event_id, release_time_utc, actual_value, forecast_value,
+       previous_value, revised_prev_value
+   - calendar_events:
+       id, title, event_code, importance_enum, unit_enum, country_id
+   - calendar_countries:
+       id, code
+   - calendar_unit_map:
+       id, text
 ========================================================= */
 
-type CalendarValuesHumanRow = {
+// Helpers for array/object tolerant joins (Supabase can return arrays for nested relations)
+type MaybeArr<T> = T | T[];
+const first = <T>(x: MaybeArr<T> | null | undefined): T | null =>
+  Array.isArray(x) ? (x[0] ?? null) : (x ?? null);
+
+type UnitMapRow = { id: number; text: string | null };
+
+type ValuesSelectRow = {
   id: number;
-  release_time_utc: string | number | Date;
-  country_code: string | null;
-  event_name: string | null;
-  impact_enum: number | null;
-  importance_enum: number | null;
-  actual_num: number | null;
-  forecast_num: number | null;
-  previous_num: number | null;
+  event_id: number;
+  release_time_utc: number | string | Date;
+  actual_value: number | null;
+  forecast_value: number | null;
+  previous_value: number | null;
   revised_prev_value: number | null;
-  revised_previous_num: number | null;
-  unit_text: string | null;
-  multiplier_suffix?: string | null;
-  event_code?: string | number | null;
+  event: MaybeArr<{
+    id: number | null;
+    title: string | null;
+    event_code: string | number | null;
+    importance_enum: number | null;
+    unit_enum: number | null;
+    country: MaybeArr<{
+      code: string | null;
+    }> | null;
+  }> | null;
 };
 
 export async function queryCalendar(opts: {
@@ -106,89 +136,102 @@ export async function queryCalendar(opts: {
 }) {
   const page = Math.max(1, opts.page ?? 1);
   const pageSize = Math.min(200, Math.max(1, opts.pageSize ?? 50));
+  const countryCodes = (opts.countries ?? []).map((c) => c.toUpperCase().trim());
 
-  // Optional country filter
-  const countryCodes = (opts.countries ?? []).map((c) => c.toUpperCase());
+  const startSec = toEpochSeconds(opts.startISO);
+  const endSec = toEpochSeconds(opts.endISO);
 
-  // Build query
-  let q = supabaseAdmin
-    .from("calendar_values_human")
-    .select(
-      `
+  // Fetch unit map (enum -> text) in parallel with data
+  const unitMapPromise = supabaseAdmin.from("calendar_unit_map").select("id,text");
+
+  // Build a base query from calendar_values joining events and countries.
+  // We intentionally do NOT paginate at the DB level so that we can apply
+  // a country filter on the joined country.code reliably, then paginate in-memory.
+  const HARD_CAP = 5000;
+
+  const baseSelect = `
+    id,
+    event_id,
+    release_time_utc,
+    actual_value,
+    forecast_value,
+    previous_value,
+    revised_prev_value,
+    event:calendar_events(
       id,
-      release_time_utc,
-      country_code,
-      event_name,
-      impact_enum,
+      title,
+      event_code,
       importance_enum,
-      actual_num,
-      forecast_num,
-      previous_num,
-      revised_prev_value,
-      revised_previous_num,
-      unit_text,
-      multiplier_suffix,
-      event_code
-    `,
-      { count: "exact" }
+      unit_enum,
+      country:calendar_countries(code)
     )
-    .gte("release_time_utc", opts.startISO)
-    .lte("release_time_utc", opts.endISO);
+  ` as const;
 
-  if (countryCodes.length) {
-    q = q.in("country_code", countryCodes);
+  // First attempt: treat release_time_utc as epoch seconds (numeric)
+  let valuesResp = await supabaseAdmin
+    .from("calendar_values")
+    .select(baseSelect, { count: "exact" })
+    .gte("release_time_utc", startSec)
+    .lt("release_time_utc", endSec)
+    .order("release_time_utc", { ascending: true })
+    .limit(HARD_CAP);
+
+  // If the column is a timestamp (not numeric), retry with ISO filters
+  if (valuesResp.error?.message?.includes("operator does not exist")) {
+    valuesResp = await supabaseAdmin
+      .from("calendar_values")
+      .select(baseSelect, { count: "exact" })
+      .gte("release_time_utc", opts.startISO)
+      .lt("release_time_utc", opts.endISO)
+      .order("release_time_utc", { ascending: true })
+      .limit(HARD_CAP);
   }
 
-  q = q.order("release_time_utc", { ascending: true }).range(
-    (page - 1) * pageSize,
-    page * pageSize - 1
-  );
+  const [{ data: unitRows, error: unitErr }, { data, error }] = await Promise.all([
+    unitMapPromise,
+    Promise.resolve(valuesResp),
+  ]);
 
-  const { data, error, count } = await q.returns<CalendarValuesHumanRow[]>();
+  if (unitErr) throw new Error(unitErr.message);
   if (error) throw new Error(error.message);
 
-  // Map to CalendarEventRow (fully typed)
-  const items: CalendarEventRow[] = (data ?? []).map((r) => {
-    // Normalize release_time_utc to ISO string
-    let occursISO = "";
-    if (typeof r.release_time_utc === "string") {
-      occursISO = new Date(r.release_time_utc).toISOString();
-    } else if (r.release_time_utc instanceof Date) {
-      occursISO = r.release_time_utc.toISOString();
-    } else {
-      const n = Number(r.release_time_utc);
-      const ms = n < 1e12 ? n * 1000 : n;
-      occursISO = new Date(ms).toISOString();
-    }
+  // --- Typed unit map (no 'any')
+  const unitMap = new Map<number, string>(
+    (unitRows ?? []).map((r) => [Number((r as UnitMapRow).id), String((r as UnitMapRow).text ?? "")])
+  );
 
-    // Prefer scaled revised value if present; fallback to raw
-    const revised =
-      (typeof r.revised_previous_num === "number" ? r.revised_previous_num : null) ??
-      (typeof r.revised_prev_value === "number" ? r.revised_prev_value : null);
+  // --- Typed result rows (tolerant of array-shaped joins)
+  const rows = (data ?? []) as unknown as ValuesSelectRow[];
 
-    // Pick the importance (impact_enum first, else importance_enum)
-    const importance =
-      (typeof r.impact_enum === "number" ? r.impact_enum : null) ??
-      (typeof r.importance_enum === "number" ? r.importance_enum : null);
+  const allItems: CalendarEventRow[] = rows.map((v) => {
+    const ev = first(v.event);
+    const country = first(ev?.country ?? null);
+    const occursISO = fromDbReleaseToISO(v.release_time_utc);
 
     const item: CalendarEventRow = {
-      id: r.id,
+      id: v.id,
       occurs_at: occursISO,
-      country: (r.country_code ?? "").toUpperCase(),
-      title: r.event_name ?? "",
-      importance,
-      actual: typeof r.actual_num === "number" ? r.actual_num : null,
-      forecast: typeof r.forecast_num === "number" ? r.forecast_num : null,
-      previous: typeof r.previous_num === "number" ? r.previous_num : null,
-      revised_previous: revised,
-      unit: r.unit_text ?? null,
+      country: String(country?.code ?? "").toUpperCase(),
+      title: String(ev?.title ?? ""),
+      importance: typeof ev?.importance_enum === "number" ? ev!.importance_enum : null,
 
-      // Required fields enforced by CalendarEventRow:
-      event_code: r.event_code != null ? String(r.event_code) : String(r.id),
+      actual: typeof v.actual_value === "number" ? v.actual_value : null,
+      forecast: typeof v.forecast_value === "number" ? v.forecast_value : null,
+      previous: typeof v.previous_value === "number" ? v.previous_value : null,
+      revised_previous:
+        typeof v.revised_prev_value === "number" ? v.revised_prev_value : null,
+
+      unit:
+        typeof ev?.unit_enum === "number"
+          ? unitMap.get(ev.unit_enum) ?? null
+          : null,
+
+      event_code:
+        ev?.event_code != null ? String(ev.event_code) : String(v.event_id ?? v.id),
+
+      // Keep these aligned with your existing struct
       created_at: occursISO,
       updated_at: occursISO,
-
-      // Explicitly null to avoid client double-scaling
       multiplier: null,
       multiplier_power: null,
       unit_multiplier: null,
@@ -197,10 +240,21 @@ export async function queryCalendar(opts: {
     return item;
   });
 
+  // Optional country filter (by code), applied in-memory for reliability
+  const filtered = countryCodes.length
+    ? allItems.filter((x) => countryCodes.includes(x.country))
+    : allItems;
+
+  // In-memory pagination after filtering
+  const total = filtered.length;
+  const startIdx = (page - 1) * pageSize;
+  const endIdx = Math.min(startIdx + pageSize, total);
+  const items = filtered.slice(startIdx, endIdx);
+
   return {
     page,
     pageSize,
-    total: count ?? 0,
+    total,
     items,
   };
 }

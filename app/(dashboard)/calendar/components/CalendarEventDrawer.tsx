@@ -1,22 +1,414 @@
 // app/(dashboard)/calendar/components/CalendarEventDrawer.tsx
 "use client";
-import React, { useMemo } from "react";
+
+import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/db/supabase-clients";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Info, TrendingUp, Clock, Globe, AlertTriangle, LineChart as LineChartIcon, ExternalLink } from "lucide-react";
-import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer } from "recharts";
-import { useCalendarEvent } from "../hooks/useCalendar";
+import {
+  Info,
+  TrendingUp,
+  Clock,
+  Globe,
+  AlertTriangle,
+  LineChart as LineChartIcon,
+  ExternalLink,
+} from "lucide-react";
+import {
+  LineChart,
+  Line,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip as RTooltip,
+  ResponsiveContainer,
+} from "recharts";
 
-/**
- * CalendarEventDrawer (hook-powered)
- *
- * Uses useCalendarEvent(eventId) to fetch core metadata + history directly from Supabase.
- * Parent controls open state and supplies eventId (from the clicked row).
- */
+/* ==============================
+   Config & helper types
+============================== */
+const APPLY_MULTIPLIER_FACTOR = true;
 
+type DrawerProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+
+  /** Back-compat: numeric event id OR string event_code */
+  eventId?: number | string | null;
+
+  /** Preferred & most reliable: the clicked calendar_values.id */
+  valueId?: number | null;
+
+  /** Optional explicit event_code if you have it */
+  eventCode?: string | null;
+};
+
+type UnitRow = { unit: number; symbol: string | null; name: string | null };
+type SectorRow = { sector: number; name: string | null };
+type MultiplierRow = { multiplier: number; factor: number; suffix: string | null };
+
+type EventCore = {
+  event_id: number;
+  event_code?: string | number | null;
+  event_name: string;
+  country_code: string;
+  currency_code?: string | null;
+  currency_symbol?: string | null;
+  sector_text?: string | null;
+  importance_enum?: number | null;
+  unit_text?: string | null;
+  source_url?: string | null;
+};
+
+type EventPoint = {
+  id: number;
+  event_id: number;
+  release_time_utc: string; // ISO
+  actual_value: number | null;
+  forecast_value: number | null;
+  previous_value: number | null;
+  revised_prev_value: number | null;
+  unit_text?: string | null;
+};
+
+type Payload = {
+  core: EventCore;
+  latest?: EventPoint | null;
+  next_time_utc?: string | null;
+  history: EventPoint[];
+};
+
+type SeriesPoint = { t: string; val: number; label: string };
+type TooltipPayloadItem<T> = { payload: T };
+type TooltipContentPropsLocal<T> = {
+  active?: boolean;
+  payload?: Array<TooltipPayloadItem<T>>;
+  label?: string | number;
+};
+
+/* ==============================
+   Mapping & numeric helpers
+============================== */
+
+const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
+function normalizeUtcIso(val: string | number | Date): string {
+  if (typeof val === "number") {
+    const ms = val < 1e12 ? val * 1000 : val;
+    return new Date(ms).toISOString();
+  }
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === "string") {
+    if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(val)) return new Date(val).toISOString();
+    return new Date(val.replace(" ", "T") + "Z").toISOString();
+  }
+  return new Date().toISOString();
+}
+
+function fromMql(
+  val: number | null | undefined,
+  digits?: number | null,
+  multiplierFactor?: number | null
+): number | null {
+  if (val == null) return null;
+  const base = val / 1_000_000; // micro → normal
+  const scaled = APPLY_MULTIPLIER_FACTOR ? base * (multiplierFactor ?? 1) : base;
+  if (digits == null || !Number.isFinite(digits)) return scaled;
+  const d = Math.max(0, Number(digits));
+  const f = Math.pow(10, d);
+  return Math.round(scaled * f) / f;
+}
+
+async function loadUnitMap(): Promise<Map<number, UnitRow>> {
+  const r = await supabase.from("calendar_unit_map").select("unit,symbol,name");
+  if (r.error) return new Map();
+  const map = new Map<number, UnitRow>();
+  (r.data ?? []).forEach((row: UnitRow) => map.set(row.unit, row));
+  return map;
+}
+async function loadSectorMap(): Promise<Map<number, string>> {
+  const r = await supabase.from("calendar_sector_map").select("sector,name");
+  if (r.error) return new Map();
+  const map = new Map<number, string>();
+  (r.data ?? []).forEach((row: SectorRow) => map.set(row.sector, row.name ?? ""));
+  return map;
+}
+async function loadMultiplierMap(): Promise<Map<number, { factor: number; suffix: string }>> {
+  const tryTables = ["calendar_multiplier_map", "calendar_muliplier_map"];
+  for (const tbl of tryTables) {
+    const r = await supabase.from(tbl).select("multiplier,factor,suffix");
+    if (!r.error && r.data) {
+      const map = new Map<number, { factor: number; suffix: string }>();
+      (r.data as MultiplierRow[]).forEach((row) =>
+        map.set(row.multiplier, { factor: Number(row.factor), suffix: row.suffix ?? "" })
+      );
+      return map;
+    }
+  }
+  return new Map();
+}
+
+function buildUnitLabel(
+  unitId: number | null | undefined,
+  multiplierId: number | null | undefined,
+  unitMap: Map<number, UnitRow>,
+  multMap: Map<number, { factor: number; suffix: string }>,
+  countryCurrency?: string | null,
+  countrySymbol?: string | null
+): string | null {
+  if (unitId == null) return null;
+  const u = unitMap.get(unitId);
+  const isNone = (t?: string | null) => (t ?? "").trim().toLowerCase() === "none";
+
+  let symbol = u?.symbol ?? null;
+  if (symbol === "CUR") symbol = countrySymbol || countryCurrency || null;
+  if (symbol === "—") symbol = "";
+
+  const rawSuffix = multiplierId != null ? (multMap.get(multiplierId)?.suffix ?? "") : "";
+  const suffix = APPLY_MULTIPLIER_FACTOR ? "" : rawSuffix;
+
+  const parts: string[] = [];
+  if (symbol && symbol.trim()) parts.push(symbol.trim());
+  if (suffix && suffix.trim()) parts.push(suffix.trim());
+  const label = parts.join(" ");
+  if (label) return label;
+  if (!isNone(u?.name)) return u?.name ?? null;
+  return null;
+}
+
+/* ==============================
+   Data fetcher (self-contained)
+============================== */
+type EventsRow = {
+  id: number;
+  event_code?: string | number | null;
+  name: string;
+  country_id: number | null;
+  sector?: number | null;
+  importance?: number | null;
+  unit?: number | null;
+  multiplier?: number | null;
+  digits?: number | null;
+  source_url?: string | null;
+};
+
+type CountryRow = {
+  code: string | null;
+  currency: string | null;
+  currency_symbol: string | null;
+};
+
+type ValuesRow = {
+  id: number;
+  event_id: number;
+  time: number | string | Date; // BIGINT seconds
+  actual_value: number | null;
+  forecast_value: number | null;
+  prev_value: number | null;
+  revised_prev_value: number | null;
+  event?: { unit?: number | null; multiplier?: number | null; digits?: number | null } | null;
+};
+
+async function resolveEventIdFromAny(target: {
+  valueId?: number | null;
+  eventId?: number | string | null;
+  eventCode?: string | null;
+}): Promise<number | null> {
+  // 1) valueId → event_id
+  if (isNum(target.valueId)) {
+    const r = await supabase
+      .from("calendar_values")
+      .select("event_id")
+      .eq("id", target.valueId)
+      .maybeSingle();
+    if (r.error) throw new Error(r.error.message);
+    const id = r.data?.event_id as number | undefined;
+    if (isNum(id)) return id;
+  }
+
+  // 2) numeric eventId
+  if (isNum(target.eventId)) return target.eventId as number;
+
+  // 3) explicit eventCode prop
+  if (typeof target.eventCode === "string" && target.eventCode.trim()) {
+    const r = await supabase
+      .from("calendar_events")
+      .select("id")
+      .eq("event_code", target.eventCode.trim())
+      .maybeSingle();
+    if (r.error) throw new Error(r.error.message);
+    const id = r.data?.id as number | undefined;
+    if (isNum(id)) return id;
+  }
+
+  // 4) string eventId treated as event_code
+  if (typeof target.eventId === "string" && target.eventId.trim()) {
+    const r = await supabase
+      .from("calendar_events")
+      .select("id")
+      .eq("event_code", target.eventId.trim())
+      .maybeSingle();
+    if (r.error) throw new Error(r.error.message);
+    const id = r.data?.id as number | undefined;
+    if (isNum(id)) return id;
+  }
+
+  return null;
+}
+
+async function fetchPayload(target: {
+  valueId?: number | null;
+  eventId?: number | string | null;
+  eventCode?: string | null;
+}): Promise<Payload> {
+  // mappings
+  const [unitMap, sectorMap, multMap] = await Promise.all([
+    loadUnitMap(),
+    loadSectorMap(),
+    loadMultiplierMap(),
+  ]);
+
+  const event_id = await resolveEventIdFromAny(target);
+  if (!event_id) throw new Error("Could not resolve event id");
+
+  // 1) core event
+  const er = await supabase
+    .from("calendar_events")
+    .select(`
+      id,
+      event_code,
+      name,
+      country_id,
+      sector,
+      importance,
+      unit,
+      multiplier,
+      digits,
+      source_url
+    `)
+    .eq("id", event_id)
+    .maybeSingle();
+  if (er.error) throw new Error(er.error.message);
+  const ev = (er.data as EventsRow) ?? null;
+  if (!ev) throw new Error("Event not found");
+
+  // 1b) country
+  let country: CountryRow | null = null;
+  if (ev.country_id != null) {
+    const cr = await supabase
+      .from("calendar_countries")
+      .select(`code,currency,currency_symbol`)
+      .eq("id", ev.country_id)
+      .maybeSingle();
+    if (cr.error) throw new Error(cr.error.message);
+    country = (cr.data as CountryRow) ?? null;
+  }
+
+  const unitText = buildUnitLabel(
+    ev.unit ?? null,
+    ev.multiplier ?? null,
+    unitMap,
+    multMap,
+    country?.currency ?? null,
+    country?.currency_symbol ?? null
+  );
+
+  const core: EventCore = {
+    event_id: ev.id,
+    event_code: ev.event_code ?? null,
+    event_name: ev.name,
+    country_code: country?.code ?? "—",
+    currency_code: country?.currency ?? null,
+    currency_symbol: country?.currency_symbol ?? null,
+    sector_text: ev.sector != null ? sectorMap.get(ev.sector) ?? null : null,
+    importance_enum: ev.importance ?? null,
+    unit_text: unitText,
+    source_url: ev.source_url ?? null,
+  };
+
+  // 2) history (values)
+  const baseSelect = `
+    id,
+    event_id,
+    time,
+    actual_value,
+    forecast_value,
+    prev_value,
+    revised_prev_value,
+    event:calendar_events(unit,multiplier,digits)
+  ` as const;
+
+  const vr = await supabase
+    .from("calendar_values")
+    .select(baseSelect)
+    .eq("event_id", event_id)
+    .order("time", { ascending: false })
+    .limit(500);
+  if (vr.error) throw new Error(vr.error.message);
+
+  const history: EventPoint[] = ((vr.data as ValuesRow[]) ?? []).map((v) => {
+    const digits = v?.event?.digits ?? ev.digits ?? 0;
+    const factor =
+      (v?.event?.multiplier ?? ev.multiplier) != null
+        ? (multMap.get((v?.event?.multiplier ?? ev.multiplier)!)?.factor ?? 1)
+        : 1;
+
+    const unitTextHist = buildUnitLabel(
+      v?.event?.unit ?? ev.unit ?? null,
+      v?.event?.multiplier ?? ev.multiplier ?? null,
+      unitMap,
+      multMap,
+      country?.currency ?? null,
+      country?.currency_symbol ?? null
+    );
+
+    return {
+      id: v.id,
+      event_id: v.event_id,
+      release_time_utc: normalizeUtcIso(v.time),
+      actual_value: fromMql(v.actual_value, digits, factor),
+      forecast_value: fromMql(v.forecast_value, digits, factor),
+      previous_value: fromMql(v.prev_value, digits, factor),
+      revised_prev_value: fromMql(v.revised_prev_value, digits, factor),
+      unit_text: unitTextHist,
+    };
+  });
+
+  const latest =
+    history.find(
+      (h) =>
+        h.actual_value != null ||
+        h.forecast_value != null ||
+        h.previous_value != null ||
+        h.revised_prev_value != null
+    ) ?? history[0] ?? null;
+
+  // 3) next scheduled
+  const nowSec = Math.floor(Date.now() / 1000);
+  const nr = await supabase
+    .from("calendar_values")
+    .select(`time`)
+    .eq("event_id", event_id)
+    .gt("time", nowSec)
+    .order("time", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (nr.error) throw new Error(nr.error.message);
+
+  const next_time_utc =
+    nr.data?.time != null
+      ? normalizeUtcIso(nr.data.time as number | string | Date)
+      : null;
+
+  return { core, latest, next_time_utc, history };
+}
+
+/* ==============================
+   UI helpers
+============================== */
 function impactTone(importance?: number | null) {
   switch (importance) {
     case 3:
@@ -51,31 +443,59 @@ function fmtTime(s?: string | null) {
   }).format(d);
 }
 
-// Recharts series point type
-type SeriesPoint = { t: string; val: number; label: string };
+/* ==============================
+   Drawer component
+============================== */
+export default function CalendarEventDrawer(props: DrawerProps) {
+  const { open, onOpenChange } = props;
 
-// Minimal tooltip content props (avoid version-specific Recharts types)
-type TooltipPayloadItem<T> = { payload: T };
-type TooltipContentPropsLocal<T> = {
-  active?: boolean;
-  payload?: Array<TooltipPayloadItem<T>>;
-  label?: string | number;
-};
+  // Build a tolerant target from various props (back-compat)
+  const target = useMemo(
+    () => ({
+      valueId: props.valueId ?? null,
+      eventId:
+        typeof props.eventId === "number"
+          ? props.eventId
+          : typeof props.eventId === "string"
+          ? props.eventId
+          : null,
+      eventCode: props.eventCode ?? null,
+    }),
+    [props.valueId, props.eventId, props.eventCode]
+  );
 
-export default function CalendarEventDrawer({
-  open,
-  eventId,
-  onOpenChange,
-}: {
-  open: boolean;
-  eventId: number | null;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const { data, loading, error } = useCalendarEvent(eventId);
+  const [data, setData] = useState<Payload | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancel = false;
+
+    async function run() {
+      if (!open) return; // only fetch when visible
+      setLoading(true);
+      setError(null);
+      setData(null);
+      try {
+        const payload = await fetchPayload(target);
+        if (!cancel) setData(payload);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!cancel) setError(msg || "Failed to load event");
+      } finally {
+        if (!cancel) setLoading(false);
+      }
+    }
+
+    run();
+    return () => {
+      cancel = true;
+    };
+  }, [open, target]); // include 'target' to satisfy exhaustive-deps
 
   const series = useMemo<SeriesPoint[]>(() => {
     if (!data) return [];
-    const hist = [...data.history].reverse(); // oldest → newest for chart
+    const hist = [...data.history].reverse(); // oldest → newest
     return hist.map((p) => {
       const val = p.actual_value ?? p.forecast_value ?? null;
       return {
@@ -92,7 +512,6 @@ export default function CalendarEventDrawer({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-[48rem] p-0 bg-neutral-950 text-neutral-100 border-neutral-800">
-        {/* A11y title required by Radix/Dialog */}
         <SheetHeader className="sr-only">
           <SheetTitle>{data?.core.event_name || "Event details"}</SheetTitle>
         </SheetHeader>
@@ -160,6 +579,8 @@ export default function CalendarEventDrawer({
             <div className="h-64 w-full rounded-2xl border border-neutral-800 bg-neutral-900/40">
               {loading ? (
                 <div className="h-full grid place-items-center text-neutral-400">Loading…</div>
+              ) : error ? (
+                <div className="h-full grid place-items-center text-rose-300">{error}</div>
               ) : series.length === 0 ? (
                 <div className="h-full grid place-items-center text-neutral-500">No history</div>
               ) : (
@@ -212,7 +633,11 @@ export default function CalendarEventDrawer({
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="outline" size="sm" className="border-neutral-800 bg-neutral-900 hover:bg-neutral-800 text-neutral-200">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-neutral-800 bg-neutral-900 hover:bg-neutral-800 text-neutral-200"
+                      >
                         <AlertTriangle className="h-4 w-4 mr-1.5" /> Use responsibly
                       </Button>
                     </TooltipTrigger>
@@ -230,6 +655,9 @@ export default function CalendarEventDrawer({
   );
 }
 
+/* ==============================
+   Small UI helpers
+============================== */
 function Stat({ label, value, icon }: { label: string; value: string; icon?: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-4">

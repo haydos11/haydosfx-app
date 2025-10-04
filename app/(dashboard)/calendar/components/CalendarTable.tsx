@@ -79,7 +79,9 @@ const toShiftedDayKey = (dt: string | number | Date, offsetH: number): string =>
 /** HH:MM after applying offset */
 const fmtTimeOffset = (dt: string | number | Date, offsetH: number): string => {
   const d = shiftByOffset(dt, offsetH);
-  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(
+    d.getUTCMinutes()
+  ).padStart(2, "0")}`;
 };
 
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -136,6 +138,9 @@ const isPercentUnit = (u?: string | null): boolean =>
 const isCurrencyCode = (u?: string | null): boolean =>
   !!u && /^[A-Z]{3}$/.test(u?.trim() ?? "");
 
+// Added: treat "none" as empty
+const isNoneUnit = (u?: string | null): boolean => (u ?? "").trim().toLowerCase() === "none";
+
 // Format number with multiplier + unit (currency codes hidden)
 function fmtValue(v?: number | null, unit?: string | null, row?: Multiplierish | null): string {
   if (!isNum(v)) return "—";
@@ -148,8 +153,8 @@ function fmtValue(v?: number | null, unit?: string | null, row?: Multiplierish |
   let out = scaled.toFixed(dp);
   if (suffix) out += suffix;
   if (isPercentUnit(unit)) return `${out}%`;
-  if (isCurrencyCode(unit)) return out; // hide currency code in display
-  if (unit && unit !== "—") return `${out} ${unit}`;
+  if (isCurrencyCode(unit)) return out; // hide currency code letters in display
+  if (unit && unit !== "—" && !isNoneUnit(unit)) return `${out} ${unit}`;
   return out;
 }
 
@@ -158,7 +163,8 @@ function impactBadge(
   imp?: number | null
 ): { label: "" | "High" | "Moderate" | "Low"; cls: string } {
   if (imp == null) return { label: "", cls: "" };
-  if (imp >= 3) return { label: "High", cls: "bg-rose-500/15 text-rose-300 ring-1 ring-rose-400/30" };
+  if (imp >= 3)
+    return { label: "High", cls: "bg-rose-500/15 text-rose-300 ring-1 ring-rose-400/30" };
   if (imp === 2)
     return { label: "Moderate", cls: "bg-amber-500/15 text-amber-300 ring-1 ring-amber-400/30" };
   return { label: "Low", cls: "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30" };
@@ -217,7 +223,7 @@ function resolveEventId(row: CalendarEventRow): number | null {
   return Number.isFinite(n) ? (n as number) : null;
 }
 
-/* ----- no JSX namespace: typed to React.ReactElement ----- */
+/* ----- Previous with clearer Revised styling (stacked, low-noise) ----- */
 function PreviousWithRevision(props: {
   prev?: number | null;
   revised?: number | null;
@@ -225,29 +231,49 @@ function PreviousWithRevision(props: {
   row?: Multiplierish | null;
 }): React.ReactElement {
   const { prev, revised, unit, row } = props;
-  const hasPrev = isNum(prev);
-  const hasRevised = isNum(revised);
-  if (!hasPrev && !hasRevised) return <>—</>;
 
-  if (!hasRevised || (prev as number) === (revised as number)) {
-    return <span className="tabular-nums">{fmtValue(prev as number, unit, row ?? null)}</span>;
+  const hasPrev = isNum(prev);
+  const hasRev = isNum(revised);
+  if (!hasPrev && !hasRev) return <>—</>;
+
+  // If not revised or equal, just show the previous as canonical
+  if (!hasRev || (prev as number) === (revised as number)) {
+    return (
+      <span className="tabular-nums">
+        {hasPrev ? fmtValue(prev as number, unit, row ?? null) : "—"}
+      </span>
+    );
   }
 
   const delta = (revised as number) - (prev as number);
   const up = delta > 0;
-  const tone = up
-    ? "text-emerald-300 ring-emerald-500/25 bg-emerald-600/10"
-    : "text-rose-300 ring-rose-500/25 bg-rose-600/10";
+  const deltaTone =
+    up
+      ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/25"
+      : "bg-rose-500/15 text-rose-300 ring-rose-500/25";
+
+  const fromLabel = fmtValue(prev as number, unit, row ?? null);
+  const toLabel = fmtValue(revised as number, unit, row ?? null);
+  const dLabel = fmtValue(Math.abs(delta), unit, row ?? null);
 
   return (
-    <div className="flex items-center gap-2">
-      <span className="tabular-nums">{fmtValue(prev as number, unit, row ?? null)}</span>
-      <span className="text-slate-500">→</span>
-      <span className="tabular-nums">{fmtValue(revised as number, unit, row ?? null)}</span>
-      <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] ring-1 ${tone}`}>
-        {up ? "▲" : "▼"} {up ? "+" : ""}
-        {fmtValue(delta, unit, row ?? null)}
-      </span>
+    <div
+      className="flex flex-col leading-tight"
+      title={`Revised from ${fromLabel} to ${toLabel}`}
+    >
+      {/* old value (small, muted, struck) */}
+      <div className="text-xs text-slate-400/80 line-through tabular-nums">
+        {fromLabel}
+      </div>
+
+      {/* new value + tiny revision chip */}
+      <div className="flex items-center gap-1.5">
+        <span className="tabular-nums font-medium text-slate-100">{toLabel}</span>
+        <span className={`px-1.5 py-0.5 rounded-full text-[10px] ring-1 ${deltaTone}`}>
+          ↺ {up ? "＋" : "−"}
+          {dLabel}
+        </span>
+      </div>
     </div>
   );
 }
@@ -412,7 +438,12 @@ export default function CalendarTable({
                         </td>
 
                         <td className="hidden px-3 py-3 md:table-cell">
-                          <PreviousWithRevision prev={e.previous} revised={revisedPrev} unit={unit} row={e} />
+                          <PreviousWithRevision
+                            prev={e.previous}
+                            revised={revisedPrev}
+                            unit={unit}
+                            row={e}
+                          />
                         </td>
 
                         <td className="hidden px-3 py-3 sm:table-cell">

@@ -312,7 +312,7 @@ function detectLocalOffset(): number {
   return Math.max(-12, Math.min(14, snapped));
 }
 
-// Neutral labels to avoid “Berlin vs London” confusion
+// Neutral labels
 const TZ_ALL: TZOpt[] = [
   { value: -12,  label: "UTC−12" },
   { value: -11,  label: "UTC−11" },
@@ -530,25 +530,46 @@ export default function CalendarClient() {
     setPage(1);
   };
 
-  /* -------- Drawer state -------- */
-  const [drawer, setDrawer] = useState<{ open: boolean; eventId: number | null }>({
+  /* -------- Drawer state (now supports multiple identifiers) -------- */
+  const [drawer, setDrawer] = useState<{
+    open: boolean;
+    valueId: number | null;                // calendar_values.id (best)
+    eventId: number | string | null;       // numeric id or event_code string
+    eventCode: string | null;              // explicit code if you have it
+  }>({
     open: false,
+    valueId: null,
     eventId: null,
+    eventCode: null,
   });
 
-  type ExtraIdFields = Partial<{ event_id: number | string | null; eventId: number | string | null }>;
+  // If CalendarTable can supply a numeric event id, use this direct path
+  const handleSelectEvent = (numericEventId: number) => {
+    setDrawer({ open: true, valueId: null, eventId: numericEventId, eventCode: null });
+  };
+
+  // Fallback: row-based open that tolerates different shapes
+  type ExtraIdFields = Partial<{
+    event_id: number | string | null;
+    eventId: number | string | null;
+  }>;
   function handleSelect(row: CalendarEventRow) {
     const extras = row as unknown as ExtraIdFields;
-    const idRaw =
-      row.event_code ??
-      extras.event_id ??
-      extras.eventId ??
-      null;
+    const valueId = Number(row.id); // calendar_values.id (always numeric)
+    const eventCode = typeof row.event_code === "string" ? row.event_code : null;
 
-    const idNum = Number(idRaw);
-    if (!Number.isFinite(idNum)) return;
+    // Prefer numeric event_id when present
+    const raw = (extras.event_id ?? extras.eventId ?? null) as number | string | null;
+    const n = typeof raw === "number" ? raw : Number(raw);
+    const numericEventId = Number.isFinite(n) ? (n as number) : null;
 
-    setDrawer({ open: true, eventId: idNum });
+    // Open the drawer with whatever identifiers we have; do NOT block when number is absent
+    setDrawer({
+      open: true,
+      valueId: Number.isFinite(valueId) ? valueId : null,
+      eventId: numericEventId ?? (eventCode || null), // pass code string if no number
+      eventCode,
+    });
   }
 
   return (
@@ -683,6 +704,7 @@ export default function CalendarClient() {
         error={error}
         timeOffsetHours={tzOffset}
         onSelect={handleSelect}
+        onSelectEvent={handleSelectEvent} // <- preferred path when we have numeric event_id
       />
 
       {/* Pagination */}
@@ -708,13 +730,20 @@ export default function CalendarClient() {
         </div>
       </div>
 
-      {/* Drawer */}
+      {/* Drawer: now receives all possible identifiers */}
       <CalendarEventDrawer
         open={drawer.open}
-        eventId={drawer.eventId}
         onOpenChange={(open) =>
-          setDrawer((s) => ({ open, eventId: open ? s.eventId : null }))
+          setDrawer((s) => ({
+            open,
+            valueId: open ? s.valueId : null,
+            eventId: open ? s.eventId : null,
+            eventCode: open ? s.eventCode : null,
+          }))
         }
+        valueId={drawer.valueId}
+        eventId={drawer.eventId}
+        eventCode={drawer.eventCode}
       />
     </div>
   );
