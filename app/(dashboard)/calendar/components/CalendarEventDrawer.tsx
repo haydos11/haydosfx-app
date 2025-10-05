@@ -27,23 +27,74 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
+// Local hard two-thumb slider (so nothing else in the app changes)
+import * as SliderPrimitive from "@radix-ui/react-slider";
+
+function RangeSlider({
+  value,
+  onValueChange,
+  min,
+  max,
+  step,
+  className = "",
+}: {
+  value: number[];
+  onValueChange: (v: number[]) => void;
+  min: number;
+  max: number;
+  step: number;
+  className?: string;
+}) {
+  return (
+    <SliderPrimitive.Root
+      value={value}
+      onValueChange={onValueChange}
+      min={min}
+      max={max}
+      step={step}
+      className={
+        "relative flex w-full touch-none select-none items-center " +
+        "[--track-h:8px] [--thumb-s:18px] " +
+        "z-30 " +
+        className
+      }
+    >
+      <SliderPrimitive.Track className="relative h-[var(--track-h)] w-full grow overflow-hidden rounded-full bg-neutral-800">
+        <SliderPrimitive.Range className="absolute z-10 h-full bg-primary bg-gradient-to-r from-violet-500/30 via-fuchsia-500/20 to-rose-500/30" />
+      </SliderPrimitive.Track>
+
+      {/* Always TWO thumbs */}
+      <SliderPrimitive.Thumb
+        aria-label="Start"
+        className="relative z-30 block h-[var(--thumb-s)] w-[var(--thumb-s)] rounded-full
+                   border border-violet-400/60 bg-neutral-950 shadow
+                   hover:ring-2 hover:ring-violet-500/30
+                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50
+                   data-[state=active]:ring-2 data-[state=active]:ring-violet-500/60"
+      />
+      <SliderPrimitive.Thumb
+        aria-label="End"
+        className="relative z-30 block h-[var(--thumb-s)] w-[var(--thumb-s)] rounded-full
+                   border border-violet-400/60 bg-neutral-950 shadow
+                   hover:ring-2 hover:ring-violet-500/30
+                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50
+                   data-[state=active]:ring-2 data-[state=active]:ring-violet-500/60"
+      />
+    </SliderPrimitive.Root>
+  );
+}
+
 /* ==============================
-   Config & helper types
+   Config & types
 ============================== */
 const APPLY_MULTIPLIER_FACTOR = true;
 
 type DrawerProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-
-  /** Back-compat: numeric event id OR string event_code */
-  eventId?: number | string | null;
-
-  /** Preferred & most reliable: the clicked calendar_values.id */
-  valueId?: number | null;
-
-  /** Optional explicit event_code if you have it */
-  eventCode?: string | null;
+  eventId?: number | string | null;  // back-compat
+  valueId?: number | null;           // best: clicked calendar_values.id
+  eventCode?: string | null;         // optional
 };
 
 type UnitRow = { unit: number; symbol: string | null; name: string | null };
@@ -81,7 +132,7 @@ type Payload = {
   history: EventPoint[];
 };
 
-type SeriesPoint = { t: string; val: number; label: string };
+type SeriesPoint = { t: string; tms: number; val: number; label: string };
 type TooltipPayloadItem<T> = { payload: T };
 type TooltipContentPropsLocal<T> = {
   active?: boolean;
@@ -90,9 +141,8 @@ type TooltipContentPropsLocal<T> = {
 };
 
 /* ==============================
-   Mapping & numeric helpers
+   Helpers
 ============================== */
-
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
 function normalizeUtcIso(val: string | number | Date): string {
@@ -108,18 +158,22 @@ function normalizeUtcIso(val: string | number | Date): string {
   return new Date().toISOString();
 }
 
-function fromMql(
+/** Robust decoder for MT5-exported numbers. */
+function fromWire(
   val: number | null | undefined,
   digits?: number | null,
   multiplierFactor?: number | null
 ): number | null {
   if (val == null) return null;
-  const base = val / 1_000_000; // micro → normal
-  const scaled = APPLY_MULTIPLIER_FACTOR ? base * (multiplierFactor ?? 1) : base;
-  if (digits == null || !Number.isFinite(digits)) return scaled;
-  const d = Math.max(0, Number(digits));
-  const f = Math.pow(10, d);
-  return Math.round(scaled * f) / f;
+  let x = val;
+  if (Math.abs(x) > 1e5) x = x / 1_000_000; // auto-detect micro encoding
+  if (APPLY_MULTIPLIER_FACTOR) x *= multiplierFactor ?? 1;
+  if (Number.isFinite(digits as number)) {
+    const d = Math.max(0, Number(digits));
+    const f = Math.pow(10, d);
+    x = Math.round(x * f) / f;
+  }
+  return x;
 }
 
 async function loadUnitMap(): Promise<Map<number, UnitRow>> {
@@ -180,7 +234,7 @@ function buildUnitLabel(
 }
 
 /* ==============================
-   Data fetcher (self-contained)
+   Data fetcher
 ============================== */
 type EventsRow = {
   id: number;
@@ -194,17 +248,11 @@ type EventsRow = {
   digits?: number | null;
   source_url?: string | null;
 };
-
-type CountryRow = {
-  code: string | null;
-  currency: string | null;
-  currency_symbol: string | null;
-};
-
+type CountryRow = { code: string | null; currency: string | null; currency_symbol: string | null };
 type ValuesRow = {
   id: number;
   event_id: number;
-  time: number | string | Date; // BIGINT seconds
+  time: number | string | Date;
   actual_value: number | null;
   forecast_value: number | null;
   prev_value: number | null;
@@ -217,7 +265,6 @@ async function resolveEventIdFromAny(target: {
   eventId?: number | string | null;
   eventCode?: string | null;
 }): Promise<number | null> {
-  // 1) valueId → event_id
   if (isNum(target.valueId)) {
     const r = await supabase
       .from("calendar_values")
@@ -228,11 +275,8 @@ async function resolveEventIdFromAny(target: {
     const id = r.data?.event_id as number | undefined;
     if (isNum(id)) return id;
   }
-
-  // 2) numeric eventId
   if (isNum(target.eventId)) return target.eventId as number;
 
-  // 3) explicit eventCode prop
   if (typeof target.eventCode === "string" && target.eventCode.trim()) {
     const r = await supabase
       .from("calendar_events")
@@ -243,8 +287,6 @@ async function resolveEventIdFromAny(target: {
     const id = r.data?.id as number | undefined;
     if (isNum(id)) return id;
   }
-
-  // 4) string eventId treated as event_code
   if (typeof target.eventId === "string" && target.eventId.trim()) {
     const r = await supabase
       .from("calendar_events")
@@ -255,7 +297,6 @@ async function resolveEventIdFromAny(target: {
     const id = r.data?.id as number | undefined;
     if (isNum(id)) return id;
   }
-
   return null;
 }
 
@@ -264,7 +305,6 @@ async function fetchPayload(target: {
   eventId?: number | string | null;
   eventCode?: string | null;
 }): Promise<Payload> {
-  // mappings
   const [unitMap, sectorMap, multMap] = await Promise.all([
     loadUnitMap(),
     loadSectorMap(),
@@ -274,7 +314,6 @@ async function fetchPayload(target: {
   const event_id = await resolveEventIdFromAny(target);
   if (!event_id) throw new Error("Could not resolve event id");
 
-  // 1) core event
   const er = await supabase
     .from("calendar_events")
     .select(`
@@ -295,7 +334,6 @@ async function fetchPayload(target: {
   const ev = (er.data as EventsRow) ?? null;
   if (!ev) throw new Error("Event not found");
 
-  // 1b) country
   let country: CountryRow | null = null;
   if (ev.country_id != null) {
     const cr = await supabase
@@ -329,7 +367,6 @@ async function fetchPayload(target: {
     source_url: ev.source_url ?? null,
   };
 
-  // 2) history (values)
   const baseSelect = `
     id,
     event_id,
@@ -369,24 +406,31 @@ async function fetchPayload(target: {
       id: v.id,
       event_id: v.event_id,
       release_time_utc: normalizeUtcIso(v.time),
-      actual_value: fromMql(v.actual_value, digits, factor),
-      forecast_value: fromMql(v.forecast_value, digits, factor),
-      previous_value: fromMql(v.prev_value, digits, factor),
-      revised_prev_value: fromMql(v.revised_prev_value, digits, factor),
+      actual_value: fromWire(v.actual_value, digits, factor),
+      forecast_value: fromWire(v.forecast_value, digits, factor),
+      previous_value: fromWire(v.prev_value, digits, factor),
+      revised_prev_value: fromWire(v.revised_prev_value, digits, factor),
       unit_text: unitTextHist,
     };
   });
 
+  // latest = most recent non-empty historical (<= now)
+  const nowMsLocal = Date.now();
   const latest =
-    history.find(
-      (h) =>
-        h.actual_value != null ||
-        h.forecast_value != null ||
-        h.previous_value != null ||
-        h.revised_prev_value != null
-    ) ?? history[0] ?? null;
+    history
+      .filter(
+        (h) =>
+          +new Date(h.release_time_utc) <= nowMsLocal &&
+          (h.actual_value != null ||
+            h.forecast_value != null ||
+            h.previous_value != null ||
+            h.revised_prev_value != null)
+      )
+      .sort((a, b) => +new Date(b.release_time_utc) - +new Date(a.release_time_utc))[0] ??
+    history[0] ??
+    null;
 
-  // 3) next scheduled
+  // next scheduled (future strictly)
   const nowSec = Math.floor(Date.now() / 1000);
   const nr = await supabase
     .from("calendar_values")
@@ -399,11 +443,23 @@ async function fetchPayload(target: {
   if (nr.error) throw new Error(nr.error.message);
 
   const next_time_utc =
-    nr.data?.time != null
-      ? normalizeUtcIso(nr.data.time as number | string | Date)
-      : null;
+    nr.data?.time != null ? normalizeUtcIso(nr.data.time as number | string | Date) : null;
 
   return { core, latest, next_time_utc, history };
+}
+
+/* ==============================
+   Time + range helpers
+============================== */
+const DAY_MS = 24 * 60 * 60 * 1000;
+const YEAR_MS = 365 * DAY_MS;
+
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
+}
+function fmtISODate(dms: number) {
+  const d = new Date(dms);
+  return d.toISOString().slice(0, 10);
 }
 
 /* ==============================
@@ -411,15 +467,11 @@ async function fetchPayload(target: {
 ============================== */
 function impactTone(importance?: number | null) {
   switch (importance) {
-    case 3:
-      return { label: "High", className: "bg-red-500/15 text-red-300 border-red-600/40" };
-    case 2:
-      return { label: "Moderate", className: "bg-amber-500/15 text-amber-300 border-amber-600/40" };
-    default:
-      return { label: "Low", className: "bg-emerald-500/15 text-emerald-300 border-emerald-600/40" };
+    case 3: return { label: "High", className: "bg-red-500/15 text-red-300 border-red-600/40" };
+    case 2: return { label: "Moderate", className: "bg-amber-500/15 text-amber-300 border-amber-600/40" };
+    default: return { label: "Low", className: "bg-emerald-500/15 text-emerald-300 border-emerald-600/40" };
   }
 }
-
 function fmtNum(v: number | null | undefined, unit?: string | null) {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";
   const abs = Math.abs(v);
@@ -430,26 +482,25 @@ function fmtNum(v: number | null | undefined, unit?: string | null) {
   else s = `${v.toFixed(2)}`;
   return unit ? `${s}${unit}` : s;
 }
-
-function fmtTime(s?: string | null) {
-  if (!s) return "—";
-  const d = new Date(s);
+function fmtDateShort(iso?: string | null) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "2-digit" }).format(d);
+}
+function fmtTime(iso?: string | null) {
+  if (!iso) return "—";
+  const d = new Date(iso);
   return new Intl.DateTimeFormat(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
+    weekday: "short", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit",
   }).format(d);
 }
 
 /* ==============================
-   Drawer component
+   Component
 ============================== */
 export default function CalendarEventDrawer(props: DrawerProps) {
   const { open, onOpenChange } = props;
 
-  // Build a tolerant target from various props (back-compat)
   const target = useMemo(
     () => ({
       valueId: props.valueId ?? null,
@@ -468,55 +519,144 @@ export default function CalendarEventDrawer(props: DrawerProps) {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Domain & selection
+  const [domain, setDomain] = useState<[number, number] | null>(null);
+  const [range, setRange] = useState<number[] | null>(null);
+
   useEffect(() => {
     let cancel = false;
-
     async function run() {
-      if (!open) return; // only fetch when visible
+      if (!open) return;
       setLoading(true);
       setError(null);
       setData(null);
       try {
         const payload = await fetchPayload(target);
-        if (!cancel) setData(payload);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (!cancel) setError(msg || "Failed to load event");
+        if (cancel) return;
+        setData(payload);
+
+        const nowMs = Date.now();
+        // Build domain from history up to now only
+        const allMs = payload.history
+          .map((h) => +new Date(h.release_time_utc))
+          .filter((n) => Number.isFinite(n) && n <= nowMs);
+
+        if (allMs.length) {
+          const minAll = Math.min(...allMs);
+          const maxAll = Math.max(...allMs);
+          const defLo = clamp(maxAll - 5 * YEAR_MS, minAll, maxAll); // default 5Y
+          setDomain([minAll, maxAll]);
+          setRange([defLo, maxAll]);
+        } else {
+          setDomain(null);
+          setRange(null);
+        }
+      } catch (e) {
+        if (!cancel) setError(e instanceof Error ? e.message : String(e));
       } finally {
         if (!cancel) setLoading(false);
       }
     }
-
     run();
-    return () => {
-      cancel = true;
-    };
-  }, [open, target]); // include 'target' to satisfy exhaustive-deps
+    return () => { cancel = true; };
+  }, [open, target]);
 
-  const series = useMemo<SeriesPoint[]>(() => {
+  const nowMs = Date.now();
+
+  // Full series (oldest → newest), excluding future points
+  const seriesAll = useMemo<SeriesPoint[]>(() => {
     if (!data) return [];
-    const hist = [...data.history].reverse(); // oldest → newest
-    return hist.map((p) => {
-      const val = p.actual_value ?? p.forecast_value ?? null;
-      return {
-        t: new Date(p.release_time_utc).toISOString().slice(0, 10),
-        val: val === null ? NaN : val,
-        label: fmtNum(val, p.unit_text),
-      };
-    });
-  }, [data]);
+    const hist = [...data.history].reverse();
+    return hist
+      .map((p) => {
+        const val = p.actual_value ?? p.forecast_value ?? null;
+        const tms = +new Date(p.release_time_utc);
+        return {
+          t: new Date(p.release_time_utc).toISOString().slice(0, 10),
+          tms,
+          val: val === null ? NaN : val,
+          label: fmtNum(val, p.unit_text),
+        };
+      })
+      .filter((p) => p.tms <= nowMs);
+  }, [data, nowMs]);
+
+  // Windowed series & history
+  const series = useMemo<SeriesPoint[]>(() => {
+    if (!seriesAll.length || !range) return seriesAll;
+    const [lo, hi] = range;
+    return seriesAll.filter((p) => p.tms >= lo && p.tms <= hi);
+  }, [seriesAll, range]);
+
+  const historyWindow = useMemo<EventPoint[]>(() => {
+    if (!data?.history?.length) return [];
+    const all = data.history.filter((h) => +new Date(h.release_time_utc) <= nowMs);
+
+    if (!range) {
+      return all.sort((a, b) => +new Date(b.release_time_utc) - +new Date(a.release_time_utc));
+    }
+    const [lo, hi] = range;
+    return all
+      .filter((h) => {
+        const t = +new Date(h.release_time_utc);
+        return t >= lo && t <= hi;
+      })
+      .sort((a, b) => +new Date(b.release_time_utc) - +new Date(a.release_time_utc));
+  }, [data, range, nowMs]);
 
   const impact = impactTone(data?.core.importance_enum ?? null);
-  const latest = data?.latest || null;
+  const latest = useMemo(() => {
+    if (!data?.history?.length) return null;
+    return (
+      data.history
+        .filter((h) => +new Date(h.release_time_utc) <= nowMs)
+        .sort((a, b) => +new Date(b.release_time_utc) - +new Date(a.release_time_utc))[0] ?? null
+    );
+  }, [data, nowMs]);
+
+  // Presets
+  const applyPresetYears = (years: number) => {
+    if (!domain) return;
+    const [minAll, maxAll] = domain;
+    const lo = clamp(maxAll - years * YEAR_MS, minAll, maxAll);
+    setRange([lo, maxAll]);
+  };
+  const applyMax = () => {
+    if (!domain) return;
+    const [minAll, maxAll] = domain;
+    setRange([minAll, maxAll]);
+  };
+
+  // Year tick positions (thumb sits on this line)
+  const marks = useMemo(() => {
+    if (!domain) return [] as { left: string; label?: string; year: number }[];
+    const [minAll, maxAll] = domain;
+    const startYear = new Date(minAll).getUTCFullYear();
+    const endYear = new Date(maxAll).getUTCFullYear();
+    const spanYears = endYear - startYear;
+    const step = spanYears > 12 ? 3 : spanYears > 6 ? 2 : 1;
+    const arr: { left: string; label?: string; year: number }[] = [];
+    for (let y = startYear; y <= endYear; y += step) {
+      const pos = (Date.UTC(y, 0, 1) - minAll) / (maxAll - minAll);
+      arr.push({ left: `${(pos * 100).toFixed(2)}%`, label: `${y}`, year: y });
+    }
+    return arr;
+  }, [domain]);
+
+  const rangeText = domain && range ? `${fmtISODate(range[0])} → ${fmtISODate(range[1])}` : "—";
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-[48rem] p-0 bg-neutral-950 text-neutral-100 border-neutral-800">
+      <SheetContent
+        side="right"
+        className="w-full sm:max-w-[48rem] p-0 bg-neutral-950 text-neutral-100 border-neutral-800 flex flex-col"
+      >
         <SheetHeader className="sr-only">
           <SheetTitle>{data?.core.event_name || "Event details"}</SheetTitle>
         </SheetHeader>
 
-        <div className="h-full flex flex-col">
+        {/* SCROLLABLE BODY */}
+        <div className="flex-1 overflow-y-auto">
           {/* Header */}
           <div className="p-5 md:p-6 flex flex-col gap-2">
             <div className="flex items-center gap-2 text-sm text-neutral-400">
@@ -542,25 +682,19 @@ export default function CalendarEventDrawer(props: DrawerProps) {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 mt-1">
-              <Badge variant="outline" className={`border ${impact.className}`}>
-                {impact.label}
-              </Badge>
+              <Badge variant="outline" className={`border ${impact.className}`}>{impact.label}</Badge>
               {data?.core.currency_code ? (
-                <Badge variant="outline" className="border border-neutral-700 text-neutral-300">
-                  {data.core.currency_code}
-                </Badge>
+                <Badge variant="outline" className="border border-neutral-700 text-neutral-300">{data.core.currency_code}</Badge>
               ) : null}
               {data?.core.unit_text ? (
-                <Badge variant="outline" className="border border-neutral-700 text-neutral-300">
-                  Unit: {data.core.unit_text}
-                </Badge>
+                <Badge variant="outline" className="border border-neutral-700 text-neutral-300">Unit: {data.core.unit_text}</Badge>
               ) : null}
             </div>
           </div>
 
           <Separator className="bg-neutral-800" />
 
-          {/* Stats strip */}
+          {/* Stats */}
           <div className="p-5 md:p-6 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
             <Stat label="Actual" value={fmtNum(latest?.actual_value ?? null, latest?.unit_text)} icon={<TrendingUp className="h-4 w-4" />} />
             <Stat label="Forecast" value={fmtNum(latest?.forecast_value ?? null, latest?.unit_text)} />
@@ -570,19 +704,88 @@ export default function CalendarEventDrawer(props: DrawerProps) {
 
           <Separator className="bg-neutral-800" />
 
-          {/* Chart */}
-          <div className="p-5 md:p-6">
-            <div className="flex items-center gap-2 mb-3 text-neutral-300">
+          {/* Chart + Range */}
+          <div className="p-5 md:p-6 space-y-3">
+            <div className="flex items-center gap-2 text-neutral-300">
               <LineChartIcon className="h-4 w-4" />
               <span className="text-sm font-medium">Historical Actuals</span>
             </div>
+
+            {/* Range controls */}
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3 md:p-4 relative">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                <div className="text-xs text-neutral-400">
+                  Selected: <span className="text-neutral-200">{rangeText}</span>{" "}
+                  {series.length ? <span className="text-neutral-500">• {series.length} pts</span> : null}
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button variant="outline" size="sm" className="h-7 px-2 border-neutral-800 bg-neutral-900 hover:bg-neutral-800" onClick={() => applyPresetYears(1)}>1Y</Button>
+                  <Button variant="outline" size="sm" className="h-7 px-2 border-neutral-800 bg-neutral-900 hover:bg-neutral-800" onClick={() => applyPresetYears(3)}>3Y</Button>
+                  <Button variant="outline" size="sm" className="h-7 px-2 border-neutral-800 bg-neutral-900 hover:bg-neutral-800" onClick={() => applyPresetYears(5)}>5Y</Button>
+                  <Button variant="outline" size="sm" className="h-7 px-2 border-neutral-800 bg-neutral-900 hover:bg-neutral-800" onClick={applyMax}>Max</Button>
+                </div>
+              </div>
+
+              {/* Year tick line */}
+              <div className="mt-3 relative h-14">
+                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 pointer-events-none z-0">
+                  <div className="h-px bg-neutral-800" />
+                  {marks.map((m, i) => (
+                    <div key={i} className="absolute -translate-x-1/2" style={{ left: m.left }}>
+                      <div className="h-2 w-px bg-neutral-700 mx-auto" />
+                      <div className="text-[10px] text-neutral-500 mt-1 select-none">{m.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Colored fill only under selected range */}
+                {domain && range ? (() => {
+                  const [minAll, maxAll] = domain;
+                  const span = Math.max(1, maxAll - minAll);
+                  const leftPct = ((range[0] - minAll) / span) * 100;
+                  const rightPct = ((range[1] - minAll) / span) * 100;
+                  const widthPct = Math.max(0, rightPct - leftPct);
+                  return (
+                    <div
+                      className="pointer-events-none absolute top-[calc(50%-4px)] h-[var(--track-h)] rounded-full
+                                 bg-gradient-to-r from-violet-500/25 via-fuchsia-500/20 to-rose-500/25
+                                 ring-1 ring-violet-600/20 z-10"
+                      style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                    />
+                  );
+                })() : null}
+
+                {/* Slider on top of everything */}
+                {domain && (
+                  <RangeSlider
+                    value={range ?? [domain[0], domain[1]]}
+                    onValueChange={(v) => {
+                      if (v.length === 2 && domain) {
+                        const lo = Math.round(v[0] / DAY_MS) * DAY_MS;
+                        const hi = Math.round(v[1] / DAY_MS) * DAY_MS;
+                        setRange([clamp(lo, domain[0], domain[1]), clamp(hi, domain[0], domain[1])]);
+                      }
+                    }}
+                    min={domain[0]}
+                    max={domain[1]}
+                    step={DAY_MS}
+                    className="absolute inset-x-0 top-1/2 -translate-y-1/2 px-1"
+                  />
+                )}
+
+                {/* drag hint */}
+                <div className="absolute -bottom-4 left-0 text-[10px] text-neutral-500">Drag the ◉ handles</div>
+              </div>
+            </div>
+
+            {/* Chart */}
             <div className="h-64 w-full rounded-2xl border border-neutral-800 bg-neutral-900/40">
               {loading ? (
                 <div className="h-full grid place-items-center text-neutral-400">Loading…</div>
               ) : error ? (
                 <div className="h-full grid place-items-center text-rose-300">{error}</div>
               ) : series.length === 0 ? (
-                <div className="h-full grid place-items-center text-neutral-500">No history</div>
+                <div className="h-full grid place-items-center text-neutral-500">No history in selected range</div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={series} margin={{ top: 16, right: 24, left: 8, bottom: 8 }}>
@@ -611,6 +814,49 @@ export default function CalendarEventDrawer(props: DrawerProps) {
 
           <Separator className="bg-neutral-800" />
 
+          {/* History Table (more room + compact) */}
+          <div className="p-5 md:p-6 pt-4">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-neutral-200">History</h3>
+              <span className="text-[11px] text-neutral-500">{historyWindow.length} rows</span>
+            </div>
+
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 overflow-hidden">
+              <div className="max-h-[50vh] overflow-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 z-10 bg-neutral-900/90 backdrop-blur supports-[backdrop-filter]:bg-neutral-900/60">
+                    <tr className="text-neutral-400">
+                      <Th>Date</Th>
+                      <Th className="text-right">Actual</Th>
+                      <Th className="text-right">Forecast</Th>
+                      <Th className="text-right">Previous</Th>
+                      <Th className="text-right">Revised</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyWindow.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-4 text-center text-neutral-500">No rows in selected window</td>
+                      </tr>
+                    ) : (
+                      historyWindow.map((r) => (
+                        <tr key={r.id} className="border-t border-neutral-800/70 even:bg-neutral-900/30">
+                          <Td>{fmtDateShort(r.release_time_utc)}</Td>
+                          <TdRight>{fmtNum(r.actual_value, r.unit_text)}</TdRight>
+                          <TdRight>{fmtNum(r.forecast_value, r.unit_text)}</TdRight>
+                          <TdRight>{fmtNum(r.previous_value, r.unit_text)}</TdRight>
+                          <TdRight>{fmtNum(r.revised_prev_value, r.unit_text)}</TdRight>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <Separator className="bg-neutral-800" />
+
           {/* Narrative */}
           <div className="p-5 md:p-6">
             <div className="flex items-start gap-2 text-neutral-200">
@@ -633,11 +879,7 @@ export default function CalendarEventDrawer(props: DrawerProps) {
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="border-neutral-800 bg-neutral-900 hover:bg-neutral-800 text-neutral-200"
-                      >
+                      <Button variant="outline" size="sm" className="border-neutral-800 bg-neutral-900 hover:bg-neutral-800 text-neutral-200">
                         <AlertTriangle className="h-4 w-4 mr-1.5" /> Use responsibly
                       </Button>
                     </TooltipTrigger>
@@ -669,6 +911,15 @@ function Stat({ label, value, icon }: { label: string; value: string; icon?: Rea
     </div>
   );
 }
+function Th({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <th className={`px-2 py-2 font-medium text-left ${className}`}>{children}</th>;
+}
+function Td({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <td className={`px-2 py-1.5 ${className}`}>{children}</td>;
+}
+function TdRight({ children }: { children: React.ReactNode }) {
+  return <Td className="text-right tabular-nums">{children}</Td>;
+}
 
 function renderExplainer(eventName?: string, sector?: string | null) {
   if (!eventName) return "This indicator can influence risk appetite and FX flows if it deviates from expectations.";
@@ -682,7 +933,7 @@ function renderExplainer(eventName?: string, sector?: string | null) {
   if (name.includes("gdp")) {
     return "GDP tracks overall economic growth. Surprises move rate expectations and risk sentiment, with FX reacting most when the policy path is in question.";
   }
-  if (sector?.toLowerCase().includes("housing")) {
+  if ((sector ?? "").toLowerCase().includes("housing")) {
     return "Housing data affects consumption and financial conditions. Strength tightens conditions; weakness can signal slowing demand.";
   }
   return "This indicator can shift rate expectations and liquidity conditions. Watch DXY, front-end yields, and cross-asset correlations around the release.";

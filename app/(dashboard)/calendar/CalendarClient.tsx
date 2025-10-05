@@ -142,7 +142,6 @@ function RangeCalendar({
 
           const clsBase =
             "relative select-none px-0 py-1.5 text-sm tabular-nums border border-white/10";
-          // Stronger band: indigo tint for range, solid indigo for endpoints
           const bg =
             _isStart || _isEnd
               ? "bg-indigo-600/80 text-white"
@@ -278,102 +277,119 @@ function MultiSelect({
   );
 }
 
-/* ------------ Timezone helpers & select (supports :30) ------------ */
-type TZOpt = { value: number; label: string };
+/* ------------ Timezone helpers & compact GMT picker (DST aware) ------------ */
+type TZCity = { tz: string; city: string };
 
-/** Format e.g. 9.5 -> "UTC+9:30", -3.5 -> "UTC−3:30" */
-function formatUtcOffset(val: number) {
-  const sign = val >= 0 ? "+" : "−";
+/** Compute current GMT offset (hours, can be .5/.75) for an IANA TZ id. */
+function offsetHoursFor(tz: string): number {
+  const now = new Date();
+  // Difference (in minutes) between UTC clock and target TZ clock
+  const diffMin =
+    (Date.parse(now.toLocaleString("en-US", { timeZone: "UTC", hour12: false })) -
+      Date.parse(now.toLocaleString("en-US", { timeZone: tz, hour12: false }))) / 60000;
+  // If TZ is ahead of UTC, diffMin is negative; flip sign and convert to hours
+  return Math.round((-diffMin / 60) * 2) / 2; // snap to nearest 0.5h
+}
+
+/** "GMT+1:30" / "GMT-3" formatter */
+function fmtGMT(val: number) {
+  const sign = val >= 0 ? "+" : "-";
   const abs = Math.abs(val);
-  const hours = Math.floor(abs);
-  const mins = Math.round((abs - hours) * 60);
-  return `UTC${sign}${hours}${mins ? `:${String(mins).padStart(2, "0")}` : ""}`;
+  const h = Math.floor(abs);
+  const m = Math.round((abs - h) * 60);
+  return `GMT${sign}${h}${m ? `:${String(m).padStart(2, "0")}` : ""}`;
 }
 
-/** Better local offset detection: uses shortOffset (handles :30), falls back to getTimezoneOffset */
-function detectLocalOffset(): number {
-  try {
-    const parts = new Intl.DateTimeFormat(undefined, { timeZoneName: "shortOffset" }).formatToParts(new Date());
-    const raw = parts.find(p => p.type === "timeZoneName")?.value || ""; // e.g. "GMT+9:30"
-    const m = raw.match(/([+-]\d{1,2})(?::(\d{2}))?/);
-    if (m) {
-      const h = parseInt(m[1], 10);
-      const min = m[2] ? parseInt(m[2], 10) : 0;
-      const frac = min >= 30 ? 0.5 : 0;
-      const val = h + frac;
-      const snapped = Math.round(val * 2) / 2;
-      return Math.max(-12, Math.min(14, snapped));
-    }
-  } catch {
-    /* noop */
-  }
-  const hours = -new Date().getTimezoneOffset() / 60;
-  const snapped = Math.round(hours * 2) / 2;
-  return Math.max(-12, Math.min(14, snapped));
+/** Best-effort local IANA time zone id */
+function detectLocalTzId(): string {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; }
+  catch { return "UTC"; }
 }
 
-// Neutral labels
-const TZ_ALL: TZOpt[] = [
-  { value: -12,  label: "UTC−12" },
-  { value: -11,  label: "UTC−11" },
-  { value: -10,  label: "UTC−10" },
-  { value: -9,   label: "UTC−9"  },
-  { value: -8,   label: "UTC−8"  },
-  { value: -7,   label: "UTC−7"  },
-  { value: -6,   label: "UTC−6"  },
-  { value: -5,   label: "UTC−5"  },
-  { value: -4,   label: "UTC−4"  },
-  { value: -3.5, label: "UTC−3:30" },
-  { value: -3,   label: "UTC−3"  },
-  { value: -2,   label: "UTC−2"  },
-  { value: -1,   label: "UTC−1"  },
-  { value: 0,    label: "UTC±0"  },
-  { value: 1,    label: "UTC+1"  },
-  { value: 2,    label: "UTC+2"  },
-  { value: 3,    label: "UTC+3"  },
-  { value: 3.5,  label: "UTC+3:30" },
-  { value: 4,    label: "UTC+4"  },
-  { value: 4.5,  label: "UTC+4:30" },
-  { value: 5,    label: "UTC+5"  },
-  { value: 5.5,  label: "UTC+5:30" },
-  { value: 6,    label: "UTC+6"  },
-  { value: 6.5,  label: "UTC+6:30" },
-  { value: 7,    label: "UTC+7"  },
-  { value: 8,    label: "UTC+8"  },
-  { value: 9,    label: "UTC+9"  },
-  { value: 9.5,  label: "UTC+9:30" },
-  { value: 10,   label: "UTC+10" },
-  { value: 11,   label: "UTC+11" },
-  { value: 12,   label: "UTC+12" },
-  { value: 13,   label: "UTC+13" },
-  { value: 14,   label: "UTC+14" },
+/** Curated list: one representative city per zone (includes half-hours). */
+const TZ_CITIES: TZCity[] = [
+  { tz: "Etc/GMT+12", city: "Baker Isl." },
+  { tz: "Pacific/Pago_Pago", city: "Pago Pago" },
+  { tz: "Pacific/Honolulu", city: "Honolulu" },
+  { tz: "America/Anchorage", city: "Anchorage" },
+  { tz: "America/Los_Angeles", city: "Los Angeles" },
+  { tz: "America/Denver", city: "Denver" },
+  { tz: "America/Chicago", city: "Chicago" },
+  { tz: "America/New_York", city: "New York" },
+  { tz: "America/Toronto", city: "Toronto" },
+  { tz: "America/St_Johns", city: "St John’s" }, // -3:30
+  { tz: "America/Argentina/Buenos_Aires", city: "Buenos Aires" },
+  { tz: "Atlantic/Azores", city: "Azores" },
+  { tz: "Europe/London", city: "London" },       // DST-aware (0 / +1)
+  { tz: "Europe/Berlin", city: "Berlin" },       // DST-aware (+1 / +2)
+  { tz: "Europe/Athens", city: "Athens" },
+  { tz: "Europe/Moscow", city: "Moscow" },
+  { tz: "Asia/Tehran", city: "Tehran" },         // +3:30
+  { tz: "Asia/Dubai", city: "Dubai" },
+  { tz: "Asia/Kabul", city: "Kabul" },           // +4:30
+  { tz: "Asia/Karachi", city: "Karachi" },
+  { tz: "Asia/Kolkata", city: "Mumbai" },        // +5:30
+  { tz: "Asia/Kathmandu", city: "Kathmandu" },   // +5:45
+  { tz: "Asia/Dhaka", city: "Dhaka" },
+  { tz: "Asia/Yangon", city: "Yangon" },         // +6:30
+  { tz: "Asia/Bangkok", city: "Bangkok" },
+  { tz: "Asia/Shanghai", city: "Shanghai" },
+  { tz: "Asia/Tokyo", city: "Tokyo" },
+  { tz: "Australia/Adelaide", city: "Adelaide" },// +9:30 (+10:30 DST)
+  { tz: "Australia/Sydney", city: "Sydney" },    // +10 / +11 DST
+  { tz: "Australia/Lord_Howe", city: "Lord Howe" }, // +10:30/+11
+  { tz: "Pacific/Noumea", city: "Nouméa" },
+  { tz: "Pacific/Auckland", city: "Auckland" },
+  { tz: "Pacific/Chatham", city: "Chatham Isl." },  // +12:45/+13:45
+  { tz: "Pacific/Tongatapu", city: "Nukuʻalofa" },
+  { tz: "Pacific/Kiritimati", city: "Kiritimati" },
 ];
 
 function TimezoneSelect({
   value,
   onChange,
 }: {
-  value: number;
+  value: number;                 // parent still receives a plain offset (hours)
   onChange: (v: number) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [alignRight, setAlignRight] = useState(false);
+  const [tzId, setTzId] = useState<string>(detectLocalTzId());
   const popRef = useClickAway<HTMLDivElement>(() => setOpen(false));
-  const zeroRef = useRef<HTMLButtonElement | null>(null);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+
+  // compute current row label & offset (DST-aware)
+  const currentCity = useMemo(() => {
+    const found = TZ_CITIES.find(c => c.tz === tzId);
+    return found ?? { tz: "UTC", city: "UTC" };
+  }, [tzId]);
+
+  const currentOffset = useMemo(() => offsetHoursFor(currentCity.tz), [currentCity.tz]);
+  const pillLabel = `${fmtGMT(currentOffset)} • ${currentCity.city}`;
+
+  // emit offset to parent whenever the tz changes (or at mount)
+  useEffect(() => {
+    onChange(currentOffset);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentOffset]);
 
   useEffect(() => {
-    if (open && zeroRef.current) zeroRef.current.scrollIntoView({ block: "center" });
+    if (!open || !btnRef.current) return;
+    const rect = btnRef.current.getBoundingClientRect();
+    const menuWidth = 240;
+    const spaceRight = window.innerWidth - rect.left;
+    setAlignRight(spaceRight < menuWidth + 16);
   }, [open]);
-
-  const current = TZ_ALL.find((o) => o.value === value) ?? TZ_ALL.find((o) => o.value === 0)!;
 
   return (
     <div className="relative" ref={popRef}>
       <button
-        onClick={() => setOpen((o) => !o)}
+        ref={btnRef}
+        onClick={() => setOpen(o => !o)}
         className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-[#0c0c0c] px-3 py-2 text-sm text-slate-200 hover:bg-white/[0.04] transition"
+        title={currentCity.tz}
       >
-        <span className="inline-block h-2 w-2 rounded-full bg-gradient-to-r from-indigo-400 via-fuchsia-400 to-emerald-400" />
-        <span>{`${current.label}`}</span>
+        {pillLabel}
         <svg
           className={`h-3 w-3 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`}
           viewBox="0 0 20 20" fill="currentColor"
@@ -383,32 +399,89 @@ function TimezoneSelect({
       </button>
 
       {open && (
-        <div className="absolute z-30 mt-2 w-[220px] rounded-2xl border border-white/10 bg-[#0c0c0c]/95 p-2 shadow-2xl backdrop-blur">
-          <div className="max-h-64 overflow-auto">
-            {TZ_ALL.map((opt) => {
-              const selected = opt.value === value;
-              const base =
-                "w-full text-left rounded-md px-3 py-2 text-sm hover:bg-white/[0.06] text-slate-200 flex items-center justify-between";
+        <div
+          className={`absolute z-30 mt-2 w-[240px] rounded-2xl border border-white/10 bg-[#0c0c0c]/95 p-2 shadow-2xl backdrop-blur ${
+            alignRight ? "right-0" : "left-0"
+          }`}
+          style={{ maxHeight: 320, overflowY: "auto" }}
+        >
+          <ul>
+            {TZ_CITIES.map((opt) => {
+              const off = offsetHoursFor(opt.tz);
+              const selected = opt.tz === tzId;
               return (
-                <button
-                  key={opt.value}
-                  ref={opt.value === 0 ? zeroRef : null}
-                  className={`${base} ${selected ? "bg-white/[0.08]" : ""}`}
-                  onClick={() => {
-                    onChange(opt.value);
-                    setOpen(false);
-                  }}
-                >
-                  <span>{opt.label}</span>
-                  {selected ? <span className="text-emerald-300 text-xs">✓</span> : null}
-                </button>
+                <li key={opt.tz}>
+                  <button
+                    className={`w-full grid grid-cols-[auto_auto] items-center rounded-md px-2 py-1 text-xs hover:bg-white/[0.06] ${
+                      selected ? "bg-white/[0.08]" : ""
+                    }`}
+                    onClick={() => { setTzId(opt.tz); setOpen(false); }}
+                    title={opt.tz}
+                  >
+                    <span className="tabular-nums">{fmtGMT(off)}</span>
+                    <span className="justify-self-end truncate">{opt.city}</span>
+                  </button>
+                </li>
               );
             })}
+          </ul>
+
+          <div className="mt-2 pt-2 border-t border-white/10">
+            <button
+              onClick={() => { setTzId(detectLocalTzId()); }}
+              className="w-full rounded-md bg-emerald-600/80 px-2 py-1.5 text-xs text-white hover:bg-emerald-600"
+            >
+              Use my location
+            </button>
           </div>
         </div>
       )}
     </div>
   );
+}
+
+
+/* ------------ Country/sector/impact options per your Supabase mapping ------------ */
+
+type CountryRow = { id: number; name: string; code: string; currency: string; currency_symbol: string; url_name: string };
+const COUNTRIES_RAW: CountryRow[] = [
+  { id: 0,   name: "Worldwide",      code: "WW", currency: "ALL", currency_symbol: "",    url_name: "worldwide" },
+  { id: 36,  name: "Australia",      code: "AU", currency: "AUD", currency_symbol: "$",   url_name: "australia" },
+  { id: 76,  name: "Brazil",         code: "BR", currency: "BRL", currency_symbol: "R$",  url_name: "brazil" },
+  { id: 124, name: "Canada",         code: "CA", currency: "CAD", currency_symbol: "$",   url_name: "canada" },
+  { id: 156, name: "China",          code: "CN", currency: "CNY", currency_symbol: "¥",   url_name: "china" },
+  { id: 250, name: "France",         code: "FR", currency: "EUR", currency_symbol: "€",   url_name: "france" },
+  { id: 276, name: "Germany",        code: "DE", currency: "EUR", currency_symbol: "€",   url_name: "germany" },
+  { id: 344, name: "Hong Kong",      code: "HK", currency: "HKD", currency_symbol: "HK$", url_name: "hong-kong" },
+  { id: 356, name: "India",          code: "IN", currency: "INR", currency_symbol: "₹",   url_name: "india" },
+  { id: 380, name: "Italy",          code: "IT", currency: "EUR", currency_symbol: "€",   url_name: "italy" },
+  { id: 392, name: "Japan",          code: "JP", currency: "JPY", currency_symbol: "¥",   url_name: "japan" },
+  { id: 410, name: "South Korea",    code: "KR", currency: "KRW", currency_symbol: "₩",   url_name: "south-korea" },
+  { id: 484, name: "Mexico",         code: "MX", currency: "MXN", currency_symbol: "Mex$",url_name: "mexico" },
+  { id: 554, name: "New Zealand",    code: "NZ", currency: "NZD", currency_symbol: "$",   url_name: "new-zealand" },
+  { id: 578, name: "Norway",         code: "NO", currency: "NOK", currency_symbol: "Kr",  url_name: "norway" },
+  { id: 702, name: "Singapore",      code: "SG", currency: "SGD", currency_symbol: "R$",  url_name: "singapore" },
+  { id: 710, name: "South Africa",   code: "ZA", currency: "ZAR", currency_symbol: "R",   url_name: "south-africa" },
+  { id: 724, name: "Spain",          code: "ES", currency: "EUR", currency_symbol: "€",   url_name: "spain" },
+  { id: 752, name: "Sweden",         code: "SE", currency: "SEK", currency_symbol: "Kr",  url_name: "sweden" },
+  { id: 756, name: "Switzerland",    code: "CH", currency: "CHF", currency_symbol: "₣",   url_name: "switzerland" },
+  { id: 826, name: "United Kingdom", code: "GB", currency: "GBP", currency_symbol: "£",   url_name: "united-kingdom" },
+  { id: 840, name: "United States",  code: "US", currency: "USD", currency_symbol: "$",   url_name: "united-states" },
+  { id: 999, name: "European Union", code: "EU", currency: "EUR", currency_symbol: "€",   url_name: "european-union" },
+];
+
+const PREFERRED_TOP_CODES = ["EU","US","GB","JP","CA","AU","NZ","CH","CN"];
+
+function buildCountryOptions(): Option[] {
+  const topSet = new Set(PREFERRED_TOP_CODES);
+  const top = COUNTRIES_RAW.filter(c => topSet.has(c.code));
+  const rest = COUNTRIES_RAW.filter(c => !topSet.has(c.code));
+  const byLabel = (a: CountryRow, b: CountryRow) => a.name.localeCompare(b.name);
+  const fmt = (c: CountryRow): Option => ({
+    value: c.code,
+    label: `${c.name} (${c.currency})`,
+  });
+  return [...top, ...rest.sort(byLabel)].map(fmt);
 }
 
 /* ------------ Main component ------------ */
@@ -420,55 +493,42 @@ export default function CalendarClient() {
   const [page, setPage] = useState<number>(1);
   const pageSize = 50;
 
-  /* ---- Timezone offset (UTC) — auto-detect on first load (supports :30) ---- */
-  const [tzOffset, setTzOffset] = useState<number>(detectLocalOffset());
+  /* ---- Timezone offset (GMT) ---- */
+  const [tzOffset, setTzOffset] = useState<number>(() => offsetHoursFor(detectLocalTzId()));
 
-  /* Countries (expanded) */
-  const COUNTRY_OPTIONS: Option[] = [
-    { value: "US", label: "United States (USD)" },
-    { value: "GB", label: "United Kingdom (GBP)" },
-    { value: "EU", label: "Euro Area (EUR)" },
-    { value: "JP", label: "Japan (JPY)" },
-    { value: "CA", label: "Canada (CAD)" },
-    { value: "AU", label: "Australia (AUD)" },
-    { value: "NZ", label: "New Zealand (NZD)" },
-    { value: "CH", label: "Switzerland (CHF)" },
-    { value: "CN", label: "China (CNY)" },
-    { value: "MX", label: "Mexico (MXN)" },
-    { value: "ZA", label: "South Africa (ZAR)" },
-    { value: "SE", label: "Sweden (SEK)" },
-    { value: "NO", label: "Norway (NOK)" },
-    { value: "DK", label: "Denmark (DKK)" },
-    { value: "HK", label: "Hong Kong (HKD)" },
-    { value: "SG", label: "Singapore (SGD)" },
-    { value: "KR", label: "South Korea (KRW)" },
-  ];
-  const G9_FX = ["EU", "US", "GB", "JP", "CA", "AU", "NZ", "CH", "CN"];
-  const [countriesSel, setCountriesSel] = useState<string[]>(G9_FX);
 
+  /* Countries — Supabase mapping, with preferred 9 pinned & preselected */
+  const COUNTRY_OPTIONS: Option[] = useMemo(buildCountryOptions, []);
+  const [countriesSel, setCountriesSel] = useState<string[]>(PREFERRED_TOP_CODES);
+
+  /* Sectors — full list; empty selection = show all */
   const SECTOR_OPTIONS: Option[] = [
-    { value: "Market", label: "Market" },
-    { value: "GDP", label: "GDP" },
-    { value: "Jobs", label: "Jobs" },
-    { value: "Prices", label: "Prices" },
-    { value: "Money", label: "Money" },
-    { value: "Trade", label: "Trade" },
-    { value: "Government", label: "Government" },
-    { value: "Business", label: "Business" },
-    { value: "Consumer", label: "Consumer" },
-    { value: "Housing", label: "Housing" },
-    { value: "Taxes", label: "Taxes" },
-    { value: "Holidays", label: "Holidays" },
+    { value: "None",      label: "None" },
+    { value: "Market",    label: "Market" },
+    { value: "GDP",       label: "GDP" },
+    { value: "Jobs",      label: "Jobs" },
+    { value: "Prices",    label: "Prices" },
+    { value: "Money",     label: "Money" },
+    { value: "Trade",     label: "Trade" },
+    { value: "Government",label: "Government" },
+    { value: "Business",  label: "Business" },
+    { value: "Consumer",  label: "Consumer" },
+    { value: "Housing",   label: "Housing" },
+    { value: "Taxes",     label: "Taxes" },
+    { value: "Holidays",  label: "Holidays" },
   ];
   const [sectorsSel, setSectorsSel] = useState<string[]>([]);
 
+  /* Impact — 0..3; empty = show all */
   const IMPACT_OPTIONS: Option[] = [
+    { value: "0", label: "None" },
     { value: "1", label: "Low" },
     { value: "2", label: "Moderate" },
     { value: "3", label: "High" },
   ];
   const [impactSel, setImpactSel] = useState<string[]>([]);
 
+  /* Encode for hook (only include parts that have selections) */
   const encodedCountry = useMemo(() => {
     const parts: string[] = [];
     if (countriesSel.length) parts.push(countriesSel.join(","));
@@ -480,7 +540,7 @@ export default function CalendarClient() {
   const { data, loading, error } = useCalendar({
     start: range.start,
     end: range.end,
-    country: encodedCountry,
+    country: encodedCountry, // empty string => no filters used
     page,
     pageSize,
   });
@@ -530,12 +590,12 @@ export default function CalendarClient() {
     setPage(1);
   };
 
-  /* -------- Drawer state (now supports multiple identifiers) -------- */
+  /* -------- Drawer state -------- */
   const [drawer, setDrawer] = useState<{
     open: boolean;
-    valueId: number | null;                // calendar_values.id (best)
-    eventId: number | string | null;       // numeric id or event_code string
-    eventCode: string | null;              // explicit code if you have it
+    valueId: number | null;
+    eventId: number | string | null;
+    eventCode: string | null;
   }>({
     open: false,
     valueId: null,
@@ -543,42 +603,33 @@ export default function CalendarClient() {
     eventCode: null,
   });
 
-  // If CalendarTable can supply a numeric event id, use this direct path
   const handleSelectEvent = (numericEventId: number) => {
     setDrawer({ open: true, valueId: null, eventId: numericEventId, eventCode: null });
   };
 
-  // Fallback: row-based open that tolerates different shapes
   type ExtraIdFields = Partial<{
     event_id: number | string | null;
     eventId: number | string | null;
   }>;
   function handleSelect(row: CalendarEventRow) {
     const extras = row as unknown as ExtraIdFields;
-    const valueId = Number(row.id); // calendar_values.id (always numeric)
+    const valueId = Number(row.id);
     const eventCode = typeof row.event_code === "string" ? row.event_code : null;
 
-    // Prefer numeric event_id when present
     const raw = (extras.event_id ?? extras.eventId ?? null) as number | string | null;
     const n = typeof raw === "number" ? raw : Number(raw);
     const numericEventId = Number.isFinite(n) ? (n as number) : null;
 
-    // Open the drawer with whatever identifiers we have; do NOT block when number is absent
     setDrawer({
       open: true,
       valueId: Number.isFinite(valueId) ? valueId : null,
-      eventId: numericEventId ?? (eventCode || null), // pass code string if no number
+      eventId: numericEventId ?? (eventCode || null),
       eventCode,
     });
   }
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-semibold text-slate-100">Economic Calendar</h1>
-      <p className="mt-1 text-xs text-slate-400">
-        Times shown in {formatUtcOffset(tzOffset)}
-      </p>
-
+    <div className="px-4 lg:px-6 pb-6 pt-2">
       {/* Controls */}
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         {/* Left: range + pills */}
@@ -657,10 +708,10 @@ export default function CalendarClient() {
                   Clear
                 </button>
                 <button
-                  onClick={() => setCountriesSel(G9_FX)}
+                  onClick={() => setCountriesSel(PREFERRED_TOP_CODES)}
                   className="rounded-md bg-emerald-600/80 px-2 py-1 text-xs text-white hover:bg-emerald-600"
                 >
-                  G9 FX preset
+                  Top 9 preset
                 </button>
               </div>
             }
@@ -704,7 +755,7 @@ export default function CalendarClient() {
         error={error}
         timeOffsetHours={tzOffset}
         onSelect={handleSelect}
-        onSelectEvent={handleSelectEvent} // <- preferred path when we have numeric event_id
+        onSelectEvent={handleSelectEvent}
       />
 
       {/* Pagination */}
@@ -730,7 +781,7 @@ export default function CalendarClient() {
         </div>
       </div>
 
-      {/* Drawer: now receives all possible identifiers */}
+      {/* Drawer */}
       <CalendarEventDrawer
         open={drawer.open}
         onOpenChange={(open) =>
