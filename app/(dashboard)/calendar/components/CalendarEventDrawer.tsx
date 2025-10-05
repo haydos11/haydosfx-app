@@ -158,17 +158,20 @@ function normalizeUtcIso(val: string | number | Date): string {
   return new Date().toISOString();
 }
 
-/** Robust decoder for MT5-exported numbers. */
+/** ✅ Strict decoder for MT5-exported numbers:
+ *    1) divide by 1e6
+ *    2) apply multiplier factor
+ *    3) round by digits
+ */
 function fromWire(
   val: number | null | undefined,
   digits?: number | null,
   multiplierFactor?: number | null
 ): number | null {
   if (val == null) return null;
-  let x = val;
-  if (Math.abs(x) > 1e5) x = x / 1_000_000; // auto-detect micro encoding
-  if (APPLY_MULTIPLIER_FACTOR) x *= multiplierFactor ?? 1;
-  if (Number.isFinite(digits as number)) {
+  let x = val / 1_000_000;                        // <-- always divide first
+  if (APPLY_MULTIPLIER_FACTOR) x *= (multiplierFactor ?? 1); // then multiplier
+  if (Number.isFinite(digits as number)) {        // then digits rounding
     const d = Math.max(0, Number(digits));
     const f = Math.pow(10, d);
     x = Math.round(x * f) / f;
@@ -367,6 +370,7 @@ async function fetchPayload(target: {
     source_url: ev.source_url ?? null,
   };
 
+  // pull history with event subselect to read per-row digits/unit/multiplier if present
   const baseSelect = `
     id,
     event_id,
