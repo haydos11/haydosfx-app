@@ -4,14 +4,13 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import AppShell from "@/components/shell/AppShell";
+// ❌ removed: import AppShell from "@/components/shell/AppShell";
 import type { CotSeries } from "@/lib/cot/shape";
 import RangeControls from "../components/RangeControls";
 
 // heavy charts split out (echarts inside)
 const CotCharts = dynamic(() => import("../components/CotCharts"), { ssr: false });
 
-/** API “recent” row shape (as produced by the route). */
 type RecentRow = {
   date: string;
   open_interest: number | null;
@@ -22,17 +21,15 @@ type RecentRow = {
   large_spec_short: number;
 };
 
-/** USD notional point shape */
 type UsdPoint = { date: string; netNotionalUSD: number | null };
 
-/** API shape extended with USD notional points + optional range metadata */
 type WithUsdPoints = Omit<CotSeries, "recent"> & {
   recent: RecentRow[];
   points?: UsdPoint[];
   range?: { from: string; to: string; label: string };
 };
 
-/* ---------------- Formatting helpers ---------------- */
+/* ---------------- helpers (unchanged) ---------------- */
 function fmtUSD(x: number): string {
   const sign = x < 0 ? "-" : "";
   const abs = Math.abs(x);
@@ -47,7 +44,6 @@ function fmtNum(x: number | null | undefined): string {
   return x.toLocaleString();
 }
 
-/* ---------------- Tiny delta badge ---------------- */
 function Delta({
   curr,
   prev,
@@ -76,53 +72,25 @@ function Delta({
   );
 }
 
-/* ---------------- Heatmap helpers ---------------- */
 type HeatMode = "off" | "z" | "abs";
+function clamp01(x: number) { return Math.max(0, Math.min(1, x)); }
+function median(arr: number[]) { if (!arr.length) return 0; const a=[...arr].sort((x,y)=>x-y); const m=Math.floor(a.length/2); return a.length%2?a[m]:(a[m-1]+a[m])/2; }
+function mad(arr: number[], med: number) { if (!arr.length) return 0; const dev=arr.map(v=>Math.abs(v-med)).sort((x,y)=>x-y); const m=Math.floor(dev.length/2); const raw=dev.length%2?dev[m]:(dev[m-1]+dev[m])/2; return raw*1.4826; }
+function percentile(arr: number[], p: number) { if (!arr.length) return 0; const a=[...arr].sort((x,y)=>x-y); const i=(a.length-1)*clamp01(p); const lo=Math.floor(i), hi=Math.ceil(i); if (lo===hi) return a[lo]; const t=i-lo; return a[lo]*(1-t)+a[hi]*t; }
 
-function clamp01(x: number) {
-  return Math.max(0, Math.min(1, x));
-}
-function median(arr: number[]) {
-  if (!arr.length) return 0;
-  const a = [...arr].sort((x, y) => x - y);
-  const m = Math.floor(a.length / 2);
-  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
-}
-function mad(arr: number[], med: number) {
-  if (!arr.length) return 0;
-  const dev = arr.map((v) => Math.abs(v - med)).sort((x, y) => x - y);
-  const m = Math.floor(dev.length / 2);
-  const raw = dev.length % 2 ? dev[m] : (dev[m - 1] + dev[m]) / 2;
-  return raw * 1.4826; // ≈ std under normality
-}
-function percentile(arr: number[], p: number) {
-  if (!arr.length) return 0;
-  const a = [...arr].sort((x, y) => x - y);
-  const i = (a.length - 1) * clamp01(p);
-  const lo = Math.floor(i),
-    hi = Math.ceil(i);
-  if (lo === hi) return a[lo];
-  const t = i - lo;
-  return a[lo] * (1 - t) + a[hi] * t;
-}
+const ZCAP = 3.0;
+const Z_ALPHA_MAX = 0.6;
+const ABS_P = 0.8;
 
-/** Tunables for sensitivity */
-const ZCAP = 3.0; // lower cap => more contrast
-const Z_ALPHA_MAX = 0.6; // brighter peaks
-const ABS_P = 0.8; // p80 of |values| for absolute mode
-
-/** Z-heat for signed values using median/MAD (per column) */
 function robustZHeat(value: number | null | undefined, med: number, s: number): string | null {
   if (value == null || !Number.isFinite(value) || !Number.isFinite(s) || s === 0) return null;
   const z = (value - med) / s;
   const t = clamp01(Math.abs(z) / ZCAP);
   const alpha = 0.07 + Z_ALPHA_MAX * Math.pow(t, 0.85);
   if (alpha <= 0.08) return null;
-  const hue = z >= 0 ? 156 : 350; // green/red
+  const hue = z >= 0 ? 156 : 350;
   return `hsla(${hue},72%,42%,${alpha})`;
 }
-
-/** Absolute heat for signed values vs p80 of |values| (per column) */
 function absoluteHeat(value: number | null | undefined, pAbs: number): string | null {
   if (value == null || !Number.isFinite(value) || pAbs <= 0) return null;
   const t = clamp01(Math.abs(value) / pAbs);
@@ -130,8 +98,6 @@ function absoluteHeat(value: number | null | undefined, pAbs: number): string | 
   const hue = value >= 0 ? 156 : 350;
   return `hsla(${hue},72%,42%,${alpha})`;
 }
-
-/** Log-scaled absolute heat for USD notional (per column) */
 function usdLogHeat(value: number | null | undefined, minLog: number, maxLog: number): string | null {
   if (value == null || !Number.isFinite(value)) return null;
   const abs = Math.abs(value);
@@ -153,9 +119,8 @@ export default function MarketPageClient({
   const [data, setData] = useState<WithUsdPoints | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  // UI state
   const [tableSpan, setTableSpan] = useState<"3m" | "1y" | "3y" | "5y">("3m");
-  const [heatMode, setHeatMode] = useState<HeatMode>("off"); // Off / Z / Abs
+  const [heatMode, setHeatMode] = useState<HeatMode>("off");
 
   function cutoffFromSpan(span: "3m" | "1y" | "3y" | "5y"): string {
     const d = new Date();
@@ -165,8 +130,6 @@ export default function MarketPageClient({
     if (span === "5y") d.setFullYear(d.getFullYear() - 5);
     return d.toISOString().slice(0, 10);
   }
-
-  // Map span to API fetch range (to ensure enough data for table)
   function spanToApiRange(span: "3m" | "1y" | "3y" | "5y"): "1y" | "3y" | "5y" {
     if (span === "3m" || span === "1y") return "1y";
     if (span === "3y") return "3y";
@@ -182,7 +145,6 @@ export default function MarketPageClient({
     return maxRangeLabel(range, needFromTable);
   }, [range, tableSpan]);
 
-  // Fetch
   useEffect(() => {
     if (!market) return;
     (async () => {
@@ -200,14 +162,12 @@ export default function MarketPageClient({
     })();
   }, [market, apiRange]);
 
-  // Rows for table per selected tableSpan
   const recentForTable: RecentRow[] = useMemo(() => {
     if (!data?.recent?.length) return [];
     const cutoff = cutoffFromSpan(tableSpan);
     return data.recent.filter((r) => (r.date ?? "") >= cutoff);
   }, [data, tableSpan]);
 
-  // Column-independent stats over visible span only
   const heatStats = useMemo(() => {
     const lsnVals: number[] = [];
     const comVals: number[] = [];
@@ -220,19 +180,13 @@ export default function MarketPageClient({
       const com = r.commercials_net ?? null;
       const usd = data?.points?.find((p) => p.date === r.date)?.netNotionalUSD ?? null;
 
-      if (lsn != null) {
-        lsnVals.push(lsn);
-        lsnAbs.push(Math.abs(lsn));
-      }
-      if (com != null) {
-        comVals.push(com);
-        comAbs.push(Math.abs(com));
-      }
+      if (lsn != null) { lsnVals.push(lsn); lsnAbs.push(Math.abs(lsn)); }
+      if (com != null) { comVals.push(com); comAbs.push(Math.abs(com)); }
       if (usd != null && Math.abs(usd) > 0) usdAbsLogs.push(Math.log10(Math.abs(usd)));
     }
 
     const lsnMed = median(lsnVals);
-    const lsnMAD = mad(lsnVals, lsnMed) || 1; // guard
+    const lsnMAD = mad(lsnVals, lsnMed) || 1;
     const comMed = median(comVals);
     const comMAD = mad(comVals, comMed) || 1;
 
@@ -245,7 +199,6 @@ export default function MarketPageClient({
     return { lsnMed, lsnMAD, comMed, comMAD, lsnP, comP, usdMinLog, usdMaxLog };
   }, [recentForTable, data?.points]);
 
-  /* Cell style helpers (switch on heatMode) */
   function cellHeatStyleLSN(val: number | null | undefined): CSSProperties | undefined {
     if (heatMode === "off") return undefined;
     const color =
@@ -268,8 +221,9 @@ export default function MarketPageClient({
     return color ? { boxShadow: `inset 0 0 0 9999px ${color}` } : undefined;
   }
 
+  // ⬇️ content only (no AppShell)
   return (
-    <AppShell fullBleed>
+    <div className="min-w-0 space-y-8">
       <div className="mb-4 text-sm">
         <Link href={`/cot?range=${encodeURIComponent(range)}`} className="text-slate-400 hover:text-slate-200">
           ← Back to COT Report
@@ -280,8 +234,7 @@ export default function MarketPageClient({
       {!data && !err && <div className="text-slate-300">Loading…</div>}
 
       {data && (
-        <div className="min-w-0 space-y-8">
-          {/* Header */}
+        <>
           <div className="flex items-baseline justify-between gap-4">
             <h1 className="text-2xl font-semibold">
               {data.market.code} — {data.market.name}
@@ -292,16 +245,15 @@ export default function MarketPageClient({
             </div>
           </div>
 
-          {/* Charts */}
           <CotCharts series={data} height={260} compact />
 
-          {/* Table */}
           <section>
             <div className="mb-2 flex items-center justify-between">
-              <div className="text-xs font-medium text-slate-400">Recent values ({data.market.code})</div>
+              <div className="text-xs font-medium text-slate-400">
+                Recent values ({data.market.code})
+              </div>
 
               <div className="flex items-center gap-3">
-                {/* Range chips */}
                 <div className="flex rounded-full bg-white/5 p-0.5 ring-1 ring-inset ring-white/10">
                   {(["3m", "1y", "3y", "5y"] as const).map((span) => (
                     <button
@@ -318,7 +270,6 @@ export default function MarketPageClient({
                   ))}
                 </div>
 
-                {/* Heatmap segmented control */}
                 <div className="flex items-center gap-1">
                   <span className="select-none text-xs text-slate-400">Heatmap:</span>
                   <div className="flex rounded-full bg-white/5 p-0.5 ring-1 ring-inset ring-white/10">
@@ -367,12 +318,12 @@ export default function MarketPageClient({
                       const prev = arr[idx + 1];
                       const usd = data.points?.find((p) => p.date === r.date)?.netNotionalUSD ?? null;
 
-                      const lsLong: number | null = r.large_spec_long ?? null;
-                      const lsShort: number | null = r.large_spec_short ?? null;
-                      const prevLong: number | null = prev?.large_spec_long ?? null;
-                      const prevShort: number | null = prev?.large_spec_short ?? null;
+                      const lsLong = r.large_spec_long ?? null;
+                      const lsShort = r.large_spec_short ?? null;
+                      const prevLong = prev?.large_spec_long ?? null;
+                      const prevShort = prev?.large_spec_short ?? null;
 
-                      const stn = r.small_traders_net ?? null; // no heat here
+                      const stn = r.small_traders_net ?? null;
                       const com = r.commercials_net ?? null;
                       const lsn = r.large_spec_net ?? null;
 
@@ -380,31 +331,26 @@ export default function MarketPageClient({
                         <tr key={r.date ?? idx} className="border-t border-white/5 hover:bg-white/[0.03]">
                           <td className="whitespace-nowrap px-4 py-3 text-slate-200">{r.date}</td>
 
-                          {/* Open Interest (no heat) */}
                           <td className="px-4 py-3 tabular-nums text-slate-200">
                             {fmtNum(r.open_interest)}
                             <Delta curr={r.open_interest ?? null} prev={prev?.open_interest ?? null} />
                           </td>
 
-                          {/* Small Traders Net (no heat) */}
                           <td className="px-4 py-3 tabular-nums text-slate-200">
                             {fmtNum(stn)}
                             <Delta curr={stn} prev={prev?.small_traders_net ?? null} />
                           </td>
 
-                          {/* Commercials Net (independent heat) */}
                           <td className="px-4 py-3 tabular-nums text-slate-200" style={cellHeatStyleCOM(com)}>
                             {fmtNum(com)}
                             <Delta curr={com} prev={prev?.commercials_net ?? null} />
                           </td>
 
-                          {/* Large Specs Net (independent heat) */}
                           <td className="px-4 py-3 tabular-nums text-slate-200" style={cellHeatStyleLSN(lsn)}>
                             {fmtNum(lsn)}
                             <Delta curr={lsn} prev={prev?.large_spec_net ?? null} />
                           </td>
 
-                          {/* Large Specs Long / Short (no heat) */}
                           <td className="px-4 py-3 tabular-nums text-slate-200">
                             {fmtNum(lsLong)}
                             <Delta curr={lsLong} prev={prevLong} />
@@ -414,7 +360,6 @@ export default function MarketPageClient({
                             <Delta curr={lsShort} prev={prevShort} />
                           </td>
 
-                          {/* USD Notional (independent log heat) */}
                           <td className="px-4 py-3 tabular-nums text-slate-200" style={cellHeatStyleUSD(usd)}>
                             {usd == null ? "—" : fmtUSD(usd)}
                           </td>
@@ -437,8 +382,8 @@ export default function MarketPageClient({
           <div className="mt-2 text-xs text-slate-400">
             Range: {data.range?.from ?? "…"} → {data.range?.to ?? "…"}
           </div>
-        </div>
+        </>
       )}
-    </AppShell>
+    </div>
   );
 }

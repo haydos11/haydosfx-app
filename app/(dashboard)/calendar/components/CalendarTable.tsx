@@ -90,9 +90,10 @@ const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFin
 function flagIcon(code?: string | null): React.ReactNode {
   if (!code) return null;
   const cc = code.trim().toLowerCase();
-  if (cc === "eu" || cc === "ea") return <Icon icon="circle-flags:eu" className="h-5 w-5" />;
-  if (cc === "uk" || cc === "gb") return <Icon icon="circle-flags:gb" className="h-5 w-5" />;
-  if (cc.length === 2) return <Icon icon={`circle-flags:${cc}`} className="h-5 w-5" />;
+  const cls = "h-4 w-4"; // smaller for compact rows
+  if (cc === "eu" || cc === "ea") return <Icon icon="circle-flags:eu" className={cls} />;
+  if (cc === "uk" || cc === "gb") return <Icon icon="circle-flags:gb" className={cls} />;
+  if (cc.length === 2) return <Icon icon={`circle-flags:${cc}`} className={cls} />;
   return null;
 }
 
@@ -138,7 +139,7 @@ const isPercentUnit = (u?: string | null): boolean =>
 const isCurrencyCode = (u?: string | null): boolean =>
   !!u && /^[A-Z]{3}$/.test(u?.trim() ?? "");
 
-// Added: treat "none" as empty
+// treat "none" as empty
 const isNoneUnit = (u?: string | null): boolean => (u ?? "").trim().toLowerCase() === "none";
 
 // Format number with multiplier + unit (currency codes hidden)
@@ -178,7 +179,7 @@ function deviationPill(actual?: number | null, forecast?: number | null): React.
     ? "text-emerald-300 ring-emerald-500/25 bg-emerald-600/10"
     : "text-rose-300 ring-rose-500/25 bg-rose-600/10";
   return (
-    <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs ring-1 ${tone}`}>
+    <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-[2px] text-[10px] ring-1 ${tone}`}>
       {up ? "▲" : "▼"} {up ? "+" : ""}
       {pct.toFixed(2)}%
     </span>
@@ -194,7 +195,7 @@ function arrow(
   return up ? { glyph: "↑", cls: "text-emerald-300" } : { glyph: "↓", cls: "text-rose-300" };
 }
 
-/* ---------------- event id resolver (no ts-comments) ---------------- */
+/* ---------------- event id resolver ---------------- */
 type IdFields = Partial<{
   event_id: number | string | null;
   eventCode: number | string | null;
@@ -223,7 +224,7 @@ function resolveEventId(row: CalendarEventRow): number | null {
   return Number.isFinite(n) ? (n as number) : null;
 }
 
-/* ----- Previous with clearer Revised styling (stacked, low-noise) ----- */
+/* ----- Previous with revised ON THE SIDE (compact, no wrapping) ----- */
 function PreviousWithRevision(props: {
   prev?: number | null;
   revised?: number | null;
@@ -233,48 +234,39 @@ function PreviousWithRevision(props: {
   const { prev, revised, unit, row } = props;
 
   const hasPrev = isNum(prev);
-  const hasRev = isNum(revised);
+  const hasRev  = isNum(revised);
+
   if (!hasPrev && !hasRev) return <>—</>;
 
-  // If not revised or equal, just show the previous as canonical
-  if (!hasRev || (prev as number) === (revised as number)) {
-    return (
-      <span className="tabular-nums">
-        {hasPrev ? fmtValue(prev as number, unit, row ?? null) : "—"}
-      </span>
-    );
+  // canonical shown value (revised if available)
+  const canonical   = hasRev ? (revised as number) : (prev as number);
+  const canonLabel  = fmtValue(canonical, unit, row ?? null);
+
+  // nothing special if not revised or equal
+  if (!hasRev || revised === prev) {
+    return <span className="tabular-nums whitespace-nowrap">{canonLabel}</span>;
   }
 
-  const delta = (revised as number) - (prev as number);
-  const up = delta > 0;
-  const deltaTone =
-    up
-      ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/25"
-      : "bg-rose-500/15 text-rose-300 ring-rose-500/25";
-
   const fromLabel = fmtValue(prev as number, unit, row ?? null);
-  const toLabel = fmtValue(revised as number, unit, row ?? null);
-  const dLabel = fmtValue(Math.abs(delta), unit, row ?? null);
+  const delta     = (revised as number) - (prev as number);
+  const up        = delta > 0;
+  const dLabel    = fmtValue(Math.abs(delta), unit, row ?? null);
+  const deltaTone = up ? "text-emerald-300" : "text-rose-300";
 
   return (
-    <div
-      className="flex flex-col leading-tight"
-      title={`Revised from ${fromLabel} to ${toLabel}`}
+    <span
+      className="inline-flex items-center gap-2 whitespace-nowrap"
+      title={`Revised from ${fromLabel} to ${canonLabel}`}
     >
-      {/* old value (small, muted, struck) */}
-      <div className="text-xs text-slate-400/80 line-through tabular-nums">
-        {fromLabel}
-      </div>
+      {/* final (revised) value */}
+      <span className="tabular-nums text-slate-100 font-medium">{canonLabel}</span>
 
-      {/* new value + tiny revision chip */}
-      <div className="flex items-center gap-1.5">
-        <span className="tabular-nums font-medium text-slate-100">{toLabel}</span>
-        <span className={`px-1.5 py-0.5 rounded-full text-[10px] ring-1 ${deltaTone}`}>
-          ↺ {up ? "＋" : "−"}
-          {dLabel}
-        </span>
-      </div>
-    </div>
+      {/* tiny side chip: previous + delta */}
+      <span className="inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[10px] ring-1 ring-white/10 bg-white/[0.03] text-slate-300">
+        <span className="tabular-nums text-slate-400/90">{fromLabel}</span>
+        <span className={`tabular-nums ${deltaTone}`}>{up ? "＋" : "−"}{dLabel}</span>
+      </span>
+    </span>
   );
 }
 
@@ -323,37 +315,41 @@ export default function CalendarTable({
   const tzHeader = `${tzSuffix}${tag ? ` • ${tag}` : ""}`;
 
   return (
-    <div className="mt-6 w-full overflow-hidden rounded-3xl border border-white/10 ring-1 ring-white/5 bg-[#0b0b0b]/70 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.6)]">
+    <div className="mt-4 w-full overflow-hidden rounded-3xl border border-white/10 ring-1 ring-white/5 bg-[#0b0b0b]/70 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.6)]">
       <div className="h-1 w-full bg-gradient-to-r from-indigo-500/30 via-fuchsia-500/30 to-emerald-500/30" />
       <div className="max-h-[72vh] overflow-auto">
-        <table className="min-w-full text-sm">
+        <table className="min-w-full text-[13px] leading-tight">
           <thead className="sticky top-0 z-10 bg-[#0b0b0b]/80 backdrop-blur text-slate-400 border-b border-white/10">
-            <tr className="[&>th]:px-3 [&>th]:py-3 [&>th]:text-left [&>th]:font-medium">
-              <th className="w-[84px]">Time ({tzHeader})</th>
-              <th className="w-[110px]">Country</th>
+            <tr className="[&>th]:px-2.5 [&>th]:py-2 [&>th]:text-left [&>th]:font-medium">
+              <th className="w-[78px]">Time ({tzHeader})</th>
+              <th className="w-[104px]">Country</th>
               <th>Event</th>
-              <th className="w-[92px]">Impact</th>
-              <th className="w-[132px]">Actual</th>
-              <th className="w-[120px] hidden md:table-cell">Forecast</th>
-              <th className="w-[240px] hidden md:table-cell">Previous</th>
-              <th className="w-[104px] hidden sm:table-cell">Deviation</th>
+              <th className="w-[86px]">Impact</th>
+              <th className="w-[120px]">Actual</th>
+              <th className="w-[112px] hidden md:table-cell">Forecast</th>
+              <th className="w-[210px] hidden md:table-cell">Previous</th>
+              <th className="w-[98px] hidden sm:table-cell">Deviation</th>
             </tr>
           </thead>
           <tbody className="[&>tr:nth-child(even)]:bg-white/[0.02]">
             {dayKeys.map((day) => (
               <React.Fragment key={day}>
                 {/* Day divider row (render using shifted day key) */}
-                <tr className="bg-white/[0.03] text-[11px] uppercase tracking-wide text-slate-400">
-                  <td colSpan={8} className="px-3 py-2 border-t border-white/10">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-gradient-to-r from-indigo-400 via-fuchsia-400 to-emerald-400" />
-                      <span className="font-semibold text-slate-200">
-                        {new Date(day + "T00:00:00Z").toUTCString().slice(0, 16)}
-                      </span>
-                      <span className="text-slate-500">• {tzHeader}</span>
-                    </div>
-                  </td>
-                </tr>
+                <tr className="bg-white/[0.05] text-[11px] uppercase tracking-wide text-slate-400 shadow-inner">
+  <td
+    colSpan={8}
+    className="px-3 py-2.5 border-y border-white/10 backdrop-blur-sm"
+  >
+    <div className="flex items-center gap-2">
+      <span className="inline-block h-1.5 w-1.5 rounded-full bg-gradient-to-r from-indigo-400 via-fuchsia-400 to-emerald-400" />
+      <span className="font-semibold text-slate-100 drop-shadow-sm">
+        {new Date(day + "T00:00:00Z").toUTCString().slice(0, 16)}
+      </span>
+      <span className="text-slate-500">• {tzHeader}</span>
+    </div>
+  </td>
+</tr>
+
 
                 {[...groups[day]]
                   .sort(
@@ -393,51 +389,51 @@ export default function CalendarTable({
                         title={eventId == null ? "No event_id on this row" : `event_id=${eventId}`}
                         data-event-id={eventId ?? undefined}
                       >
-                        <td className="px-3 py-3 tabular-nums text-slate-200">
+                        <td className="px-2.5 py-2 tabular-nums text-slate-200">
                           {fmtTimeOffset(e.occurs_at, timeOffsetHours)}
                         </td>
 
-                        <td className="px-3 py-3">
-                          <div className="flex items-center gap-2">
+                        <td className="px-2.5 py-2">
+                          <div className="flex items-center gap-1.5">
                             {flagIcon(e.country)}
                             <span className="font-medium text-slate-200">{e.country}</span>
                           </div>
                         </td>
 
-                        <td className="px-3 py-3">
+                        <td className="px-2.5 py-2">
                           <div className="max-w-[56rem] truncate text-slate-100" title={e.title}>
                             {e.title}
                           </div>
                         </td>
 
-                        <td className="px-3 py-3">
+                        <td className="px-2.5 py-2">
                           {imp.label ? (
                             <span
-                              className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs ring-1 ${imp.cls}`}
+                              className={`inline-flex items-center rounded-md px-1.5 py-[2px] text-[10px] ring-1 ${imp.cls}`}
                             >
                               {imp.label}
                             </span>
                           ) : null}
                         </td>
 
-                        <td className="px-3 py-3">
+                        <td className="px-2.5 py-2">
                           {isNum(e.actual) ? (
-                            <div className="flex items-center gap-1.5">
-                              <span className={`text-base leading-none ${arr.cls}`}>{arr.glyph}</span>
+                            <div className="flex items-center gap-1">
+                              <span className={`text-sm leading-none ${arr.cls}`}>{arr.glyph}</span>
                               <span className="tabular-nums text-slate-100">
                                 {fmtValue(e.actual, unit, e)}
                               </span>
                             </div>
                           ) : (
-                            <span className="text-slate-400">—</span>
+                            <span className="text-slate-500">—</span>
                           )}
                         </td>
 
-                        <td className="hidden px-3 py-3 tabular-nums text-slate-200 md:table-cell">
+                        <td className="hidden px-2.5 py-2 tabular-nums text-slate-200 md:table-cell">
                           {isNum(e.forecast) ? fmtValue(e.forecast, unit, e) : "—"}
                         </td>
 
-                        <td className="hidden px-3 py-3 md:table-cell">
+                        <td className="hidden px-2.5 py-2 md:table-cell whitespace-nowrap align-middle">
                           <PreviousWithRevision
                             prev={e.previous}
                             revised={revisedPrev}
@@ -446,7 +442,7 @@ export default function CalendarTable({
                           />
                         </td>
 
-                        <td className="hidden px-3 py-3 sm:table-cell">
+                        <td className="hidden px-2.5 py-2 sm:table-cell">
                           {dev ?? <span className="text-slate-500">—</span>}
                         </td>
                       </tr>

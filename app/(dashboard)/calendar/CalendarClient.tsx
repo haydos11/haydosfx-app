@@ -346,10 +346,8 @@ const TZ_CITIES: TZCity[] = [
 ];
 
 function TimezoneSelect({
-  value,
   onChange,
 }: {
-  value: number;                 // parent still receives a plain offset (hours)
   onChange: (v: number) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -487,9 +485,13 @@ function buildCountryOptions(): Option[] {
 /* ------------ Main component ------------ */
 export default function CalendarClient() {
   // defaults: this week
-  const defaultStart = useMemo(() => toISO(startOfWeekUTC()), []);
-  const defaultEnd = useMemo(() => toISO(endOfWeekUTC()), []);
-  const [range, setRange] = useState<Range>({ start: defaultStart, end: defaultEnd });
+  //const defaultStart = useMemo(() => toISO(startOfWeekUTC()), []);
+  //const defaultEnd = useMemo(() => toISO(endOfWeekUTC()), []);
+  //const [range, setRange] = useState<Range>({ start: defaultStart, end: defaultEnd });
+  // defaults: today only
+const defaultToday = useMemo(() => toISO(todayUTC()), []);
+const [range, setRange] = useState<Range>({ start: defaultToday, end: defaultToday });
+
   const [page, setPage] = useState<number>(1);
   const pageSize = 50;
 
@@ -737,7 +739,7 @@ export default function CalendarClient() {
             }}
           />
 
-          <TimezoneSelect value={tzOffset} onChange={setTzOffset} />
+          <TimezoneSelect onChange={setTzOffset} />
         </div>
       </div>
 
