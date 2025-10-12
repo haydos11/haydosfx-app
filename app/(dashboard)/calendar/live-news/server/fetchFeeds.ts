@@ -1,145 +1,115 @@
 // app/(dashboard)/calendar/live-news/server/fetchFeeds.ts
-import Parser from "rss-parser";
-import crypto from "crypto";
+import "server-only";
+import { fetchRssFeeds } from "./fetchRss";
+import { fetchMarketAux } from "./fetchMarketAux";
+import { fetchPolygonNews } from "./fetchPolygonNews";
 
-/* ---------------- types ---------------- */
 export type NormalizedItem = {
   id: string;
   title: string;
-  url: string;
-  published_at: string; // ISO
+  url: string;             // direct source link (Polygon's article_url or RSS link)
+  published_at: string;    // ISO
   summary: string;
-  source: string;       // keep flexible for future sources
+  source: string;
+  symbols?: string[];      // raw symbols from provider (e.g., ["AAPL","SPY","C:EURUSD","X:BTCUSD"])
+  assets?: string[];       // inferred tags (e.g., ["US Equities","AAPL","EURUSD","Crypto","BTC"])
 };
 
-/* ---------------- sources (FinancialJuice only) ---------------- */
-const FEEDS: { name: string; url: string }[] = [
-  { name: "FinancialJuice", url: "https://www.financialjuice.com/feed.ashx?xy=rss" },
-  // Add more sources later (e.g. ECB/BoE/etc.)
-];
-
-const parser = new Parser();
-
-// tiny in-memory cache to smooth brief outages/rate limits
 type NewsCache = { ts: number; items: NormalizedItem[] };
 const G = globalThis as typeof globalThis & { __news_cache?: NewsCache };
 
-const MEMO_TTL_MS = 5 * 60 * 1000;
+const TTL = 5 * 60 * 1000; // 5 minutes in-memory cache for combined feed
+const USE_POLYGON = !!process.env.POLYGON_API_KEY; // only call if key is present
 
-/* ---------------- helpers ---------------- */
-function sha1(s: string) {
-  return crypto.createHash("sha1").update(s).digest("hex");
-}
-function toISO(d?: string) {
-  try { return d ? new Date(d).toISOString() : new Date().toISOString(); }
-  catch { return new Date().toISOString(); }
-}
-function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
-
-/** strip provider prefixes like "FinancialJuice:" from titles */
-function cleanTitle(raw: string) {
-  return raw
-    .replace(/^\s*FinancialJuice\s*[:\-–—]\s*/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
+function toValidISO(s: string | undefined): string {
+  if (!s) return new Date().toISOString();
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? new Date(t).toISOString() : new Date().toISOString();
 }
 
-/** stable uniqueness key (includes source to avoid cross-source collisions) */
-function uniqueKey(
-  it: { guid?: string; link?: string; title?: string; isoDate?: string; pubDate?: string },
-  source: string
-) {
-  const guid = String(it.guid ?? "").trim();
-  const link = String(it.link ?? "").trim();
-  const title = String(it.title ?? "").trim();
-  const when  = String(it.isoDate ?? it.pubDate ?? "").trim();
-  const primary = guid || link ? `${guid}__${link}` : title;
-  return `${source}__${primary}__${when}`;
-}
-
-/** Next.js cached fetch + polite retry for 429/5xx */
-async function fetchTextWithCache(url: string): Promise<string> {
-  const headers: Record<string,string> = {
-    "User-Agent": "haydosfx-news-bot/1.0 (+https://haydosfx.com)",
-    "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
-  };
-  const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const res = await fetch(url, { headers, next: { revalidate: 180 } });
-    if (res.ok) return await res.text();
-    if (res.status === 429 || res.status >= 500) {
-      const delay = Math.min(1500 * 2 ** (attempt - 1) + Math.random() * 300, 6000);
-      await sleep(delay);
-      continue;
-    }
-    throw new Error(`Fetch failed ${res.status} for ${url}`);
-  }
-  throw new Error(`Fetch failed after retries for ${url}`);
-}
-
-/* ---------------- main export ---------------- */
-export async function fetchCombinedFeeds(): Promise<NormalizedItem[]> {
+/**
+ * Fetch combined live feeds. Safe to call frequently:
+ * - Each source has its own internal pacing/caching.
+ * - We also memoize the merged result for 5 minutes here.
+ *
+ * @param opts.maxItems Optional cap on returned items (after dedupe/sort)
+ */
+export async function fetchCombinedFeeds(opts?: { maxItems?: number }): Promise<NormalizedItem[]> {
   const now = Date.now();
+
+  // serve from memo cache if fresh
+  if (G.__news_cache && now - G.__news_cache.ts < TTL) {
+    const cached = G.__news_cache.items;
+    return typeof opts?.maxItems === "number" ? cached.slice(0, opts.maxItems) : cached;
+  }
+
   try {
-    const all: NormalizedItem[] = [];
+    const [rss, mx, poly] = await Promise.allSettled([
+      fetchRssFeeds(),             // your RSS consolidator
+      fetchMarketAux(3),           // marketaux (self-throttled inside)
+      USE_POLYGON ? fetchPolygonNews(25) : Promise.resolve([] as NormalizedItem[]), // Polygon only if key present
+    ]);
 
-    for (const f of FEEDS) {
-      try {
-        const xml  = await fetchTextWithCache(f.url);
-        const feed = await parser.parseString(xml);
+    const merged: NormalizedItem[] = [];
 
-        for (const it of feed.items ?? []) {
-          const titleRaw = String(it.title ?? "").trim();
-          const link     = String(it.link ?? "").trim();
-          if (!titleRaw || !link) continue;
-
-          const title = cleanTitle(titleRaw);
-          const key   = uniqueKey(
-            {
-              guid: it.guid as string | undefined,
-              link: it.link as string | undefined,
-              title,
-              isoDate: it.isoDate as string | undefined,
-              pubDate: it.pubDate as string | undefined,
-            },
-            f.name
-          );
-
-          const id        = sha1(key);
-          const when      = (it.isoDate ?? it.pubDate ?? "").toString();
-          const summary   = String(it.contentSnippet ?? "")
-            .replace(/\s+/g, " ")
-            .trim()
-            .slice(0, 300);
-
-          all.push({
-            id,
-            title,
-            url: link,
-            published_at: toISO(when),
-            summary,
-            source: f.name,
-          });
-        }
-      } catch (err) {
-        console.warn(`[news] ${f.name} fetch error:`, (err as Error)?.message ?? err);
-      }
+    if (rss.status === "fulfilled" && Array.isArray(rss.value)) {
+      merged.push(...rss.value);
+    }
+    if (mx.status === "fulfilled" && Array.isArray(mx.value)) {
+      merged.push(...mx.value);
+    }
+    if (poly.status === "fulfilled" && Array.isArray(poly.value)) {
+      merged.push(...poly.value);
     }
 
-    // de-dupe & sort
-    const seen = new Set<string>();
-    const items = all.filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)));
-    items.sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime());
+    // Normalize dates (defensive) before sort
+    for (const it of merged) {
+      it.published_at = toValidISO(it.published_at);
+    }
 
+    // De-dupe: prefer URL, then ID (handle missing/null defensively)
+    const seenIds = new Set<string>();
+    const seenUrls = new Set<string>();
+    const deduped: NormalizedItem[] = [];
+
+    for (const x of merged) {
+      const id = (x.id ?? "").trim();
+      const url = (x.url ?? "").trim().toLowerCase();
+
+      // If both missing, skip (shouldn't happen, but be safe)
+      if (!id && !url) continue;
+
+      if (url) {
+        if (seenUrls.has(url)) continue;
+        seenUrls.add(url);
+      }
+      if (id) {
+        if (seenIds.has(id)) continue;
+        seenIds.add(id);
+      }
+
+      deduped.push(x);
+    }
+
+    // Newest first
+    deduped.sort(
+      (a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime()
+    );
+
+    // Optional cap
+    const items = typeof opts?.maxItems === "number" ? deduped.slice(0, opts.maxItems) : deduped;
+
+    // Memoize
     G.__news_cache = { ts: now, items };
     return items;
   } catch (err) {
-    const cached = G.__news_cache;
-    if (cached && now - cached.ts < MEMO_TTL_MS) {
-      console.warn("[news] using memoized cache due to error:", (err as Error)?.message ?? err);
-      return cached.items;
+    // On error, fall back to previous cache if recent
+    const cache = G.__news_cache;
+    if (cache && now - cache.ts < TTL) {
+      console.warn("[news] using cache due to error:", (err as Error)?.message);
+      return typeof opts?.maxItems === "number" ? cache.items.slice(0, opts.maxItems) : cache.items;
     }
-    console.warn("[news] no cache available; returning empty:", (err as Error)?.message ?? err);
+    console.warn("[news] no cache, returning empty:", (err as Error)?.message);
     return [];
   }
 }

@@ -27,6 +27,9 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
+// ⬇️ NEW: on-demand AI summary button
+import AnalyzeButton from "./AnalyzeButton";
+
 // Local hard two-thumb slider (so nothing else in the app changes)
 import * as SliderPrimitive from "@radix-ui/react-slider";
 
@@ -303,6 +306,7 @@ async function resolveEventIdFromAny(target: {
   return null;
 }
 
+
 async function fetchPayload(target: {
   valueId?: number | null;
   eventId?: number | string | null;
@@ -500,6 +504,40 @@ function fmtTime(iso?: string | null) {
 }
 
 /* ==============================
+   AI mapping helper
+============================== */
+function toAiPanelShape(text: string | undefined): {
+  summary_bullets?: string[];
+  why_it_matters?: string;
+  sentiment?: "bullish" | "bearish" | "neutral";
+  tags?: string[];
+  countries?: string[];
+  tickers?: string[];
+} {
+  const t = (text ?? "").trim();
+  if (!t) return {};
+
+  // bullets = lines starting with "-" or "•" (fallback: split by newlines)
+  const lines = t.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  const bullets = lines
+    .filter((l) => /^[-•]\s+/.test(l))
+    .map((l) => l.replace(/^[-•]\s+/, ""));
+
+  const fallback = bullets.length ? bullets : lines;
+
+  // crude sentiment pass
+  const lower = t.toLowerCase();
+  let sentiment: "bullish" | "bearish" | "neutral" = "neutral";
+  if (/\b(risk-on|bullish|beat|hotter|strong|hawkish)\b/.test(lower)) sentiment = "bullish";
+  if (/\b(risk-off|bearish|miss|softer|weak|dovish)\b/.test(lower)) sentiment = "bearish";
+
+  return {
+    summary_bullets: fallback.slice(0, 6),
+    sentiment,
+  };
+}
+
+/* ==============================
    Component
 ============================== */
 export default function CalendarEventDrawer(props: DrawerProps) {
@@ -523,6 +561,16 @@ export default function CalendarEventDrawer(props: DrawerProps) {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ⬇️ NEW: AI result state
+  const [ai, setAi] = useState<null | {
+    summary_bullets?: string[];
+    why_it_matters?: string;
+    sentiment?: "bullish" | "bearish" | "neutral";
+    tags?: string[];
+    countries?: string[];
+    tickers?: string[];
+  }>(null);
+
   // Domain & selection
   const [domain, setDomain] = useState<[number, number] | null>(null);
   const [range, setRange] = useState<number[] | null>(null);
@@ -534,6 +582,7 @@ export default function CalendarEventDrawer(props: DrawerProps) {
       setLoading(true);
       setError(null);
       setData(null);
+      setAi(null); // reset AI panel on open/target change
       try {
         const payload = await fetchPayload(target);
         if (cancel) return;
@@ -618,6 +667,21 @@ export default function CalendarEventDrawer(props: DrawerProps) {
     );
   }, [data, nowMs]);
 
+  // ⬇️ NEW: Build a deterministic rawText for AI (better caching)
+  const aiRawText = useMemo(() => {
+    if (!data) return "";
+    const l = latest;
+    const rows = [
+      `${data.core.country_code} — ${data.core.event_name}`,
+      data.core.sector_text ? `Sector: ${data.core.sector_text}` : "",
+      data.core.unit_text ? `Unit: ${data.core.unit_text}` : "",
+      l ? `Latest Release: ${l.release_time_utc}` : "",
+      l ? `Actual: ${l.actual_value ?? "—"} | Forecast: ${l.forecast_value ?? "—"} | Previous: ${l.previous_value ?? "—"} | Revised: ${l.revised_prev_value ?? "—"}` : "",
+      data.next_time_utc ? `Next: ${data.next_time_utc}` : "",
+    ];
+    return rows.filter(Boolean).join("\n");
+  }, [data, latest]);
+
   // Presets
   const applyPresetYears = (years: number) => {
     if (!domain) return;
@@ -673,16 +737,27 @@ export default function CalendarEventDrawer(props: DrawerProps) {
               <h2 className="text-xl md:text-2xl font-semibold leading-tight">
                 {data?.core.event_name || (loading ? "Loading…" : error ? "Failed to load" : "Event")}
               </h2>
-              {data?.core.source_url ? (
-                <a
-                  href={data.core.source_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-neutral-400 hover:text-neutral-200"
-                >
-                  Source <ExternalLink className="h-3 w-3" />
-                </a>
-              ) : null}
+
+              <div className="flex items-center gap-2">
+                {/* ⬇️ NEW: On-demand AI analyze */}
+                <AnalyzeButton
+                  rawText={aiRawText}
+                  title={data?.core.event_name}
+                  source={data?.core.country_code}
+                  publishedAt={latest?.release_time_utc ?? data?.next_time_utc ?? undefined}
+                  onResult={(payload) => setAi(toAiPanelShape(payload?.text))}
+                />
+                {data?.core.source_url ? (
+                  <a
+                    href={data.core.source_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-neutral-400 hover:text-neutral-200"
+                  >
+                    Source <ExternalLink className="h-3 w-3" />
+                  </a>
+                ) : null}
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 mt-1">
@@ -695,6 +770,31 @@ export default function CalendarEventDrawer(props: DrawerProps) {
               ) : null}
             </div>
           </div>
+
+          {/* ⬇️ NEW: AI Summary panel (appears after button click) */}
+          {ai && (
+            <>
+              <Separator className="bg-neutral-800" />
+              <div className="p-5 md:p-6 pt-4">
+                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-4">
+                  <div className="text-xs uppercase tracking-wide opacity-70 mb-2">AI Summary</div>
+                  <ul className="list-disc pl-5 text-sm space-y-1">
+                    {(ai.summary_bullets ?? []).map((b, i) => <li key={i}>{b}</li>)}
+                  </ul>
+                  {ai.why_it_matters ? (
+                    <div className="text-sm mt-3">
+                      <span className="font-medium">Why it matters:</span> {ai.why_it_matters}
+                    </div>
+                  ) : null}
+                  <div className="text-xs mt-2 opacity-70">
+                    {ai.sentiment ? <>Sentiment: <span className="font-medium">{ai.sentiment}</span></> : null}
+                    {ai.tags?.length ? <> · Tags: {ai.tags.join(", ")}</> : null}
+                    {ai.tickers?.length ? <> · Tickers: {ai.tickers.join(", ")}</> : null}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
 
           <Separator className="bg-neutral-800" />
 
