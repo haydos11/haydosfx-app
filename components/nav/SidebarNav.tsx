@@ -17,10 +17,12 @@ import { Icon as Iconify } from "@iconify/react";
 /* ---- main nav (emoji) ---- */
 const MAIN = [
   { href: "/currency-strength", label: "Currency Strength", emoji: "💪" },
+  { href: "/partners", label: "Partners", emoji: "🤝" },
   { href: "/currencies",        label: "Currency Charts",   emoji: "💱" },
   { href: "/cot",               label: "COT Reports",        emoji: "📊" },
   { href: "/economy",           label: "Economy",           emoji: "🌍" },
-  { href: "/calendar",          label: "Calendar",          emoji: "🗓️" },
+  //{ href: "/calendar",          label: "Calendar",          emoji: "🗓️" },
+ // { href: "/dev-calendar",      label: "Dev-Calendar",          emoji: "🗓️" },
 ];
 
 /* ---- sub-nav: Calendar (Lucide) ---- */
