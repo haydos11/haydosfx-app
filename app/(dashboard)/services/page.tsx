@@ -21,9 +21,9 @@ export const metadata = {
 const LINKS = {
   coachingBooking: "https://buy.stripe.com/4gwbJzfNE0BwfKM5kp",
   premiumSubscribe: "https://buy.stripe.com/bIY4h7gRIbga6acdQX",
-  premiumApplication: "https://YOUR-APPLICATION-FORM-LINK",
+  premiumApplication: "https://www.haydosfx.com/application-form-1",
   // ✅ Invite-only Discord request (Typeform / Google Form / your app form)
-  discordRequest: "https://YOUR-DISCORD-REQUEST-FORM-LINK",
+  discordRequest: "https://discord.gg/TEENQdKuhb",
 };
 
 const TAGS = [
