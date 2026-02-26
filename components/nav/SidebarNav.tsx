@@ -18,23 +18,24 @@ import { Icon as Iconify } from "@iconify/react";
 const MAIN = [
   { href: "/currency-strength", label: "Currency Strength", emoji: "💪" },
   { href: "/partners", label: "Partners", emoji: "🤝" },
-  { href: "/currencies",        label: "Currency Charts",   emoji: "💱" },
-  { href: "/cot",               label: "COT Reports",        emoji: "📊" },
-  { href: "/economy",           label: "Economy",           emoji: "🌍" },
-  //{ href: "/calendar",          label: "Calendar",          emoji: "🗓️" },
- // { href: "/dev-calendar",      label: "Dev-Calendar",          emoji: "🗓️" },
+  { href: "/services", label: "Services", emoji: "💼" }, // ✅ added
+  { href: "/currencies", label: "Currency Charts", emoji: "💱" },
+  { href: "/cot", label: "COT Reports", emoji: "📊" },
+  { href: "/economy", label: "Economy", emoji: "🌍" },
+  { href: "/calendar", label: "Calendar", emoji: "🗓️" },
+  // { href: "/dev-calendar", label: "Dev-Calendar", emoji: "🗓️" },
 ];
 
 /* ---- sub-nav: Calendar (Lucide) ---- */
 const CAL_SUB = [
-  { href: "/calendar",           label: "Events",    Icon: CalendarDays },
+  { href: "/calendar", label: "Events", Icon: CalendarDays },
   { href: "/calendar/live-news", label: "Live News", Icon: Zap },
 ];
 
 /* ---- sub-nav: Economy (existing only) ---- */
 const ECON_SUB = [
-  { href: "/economy/us",      label: "United States", flag: "circle-flags:us" },
-  { href: "/economy/compare", label: "Compare",       iconOnly: true }, // GitCompare
+  { href: "/economy/us", label: "United States", flag: "circle-flags:us" },
+  { href: "/economy/compare", label: "Compare", iconOnly: true }, // GitCompare
 ];
 
 export default function SidebarNav() {
@@ -52,7 +53,7 @@ export default function SidebarNav() {
 
   // widths: collapsed 64px; expanded 224px (narrower than before)
   const WIDTH = collapsed ? "w-16" : "w-56";
-  const ITEM_SPACE = "space-y-1.5";                 // same both states
+  const ITEM_SPACE = "space-y-1.5";
   const ITEM_PAD = collapsed ? "px-0 py-2" : "px-3.5 py-2.5";
   const ACTIVE = "text-white";
   const INACTIVE = "text-slate-300 hover:text-white";
@@ -94,7 +95,6 @@ export default function SidebarNav() {
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
             {collapsed ? (
-              // small optical nudge to center the menu glyph
               <Menu size={18} className="translate-y-[0.5px]" />
             ) : (
               <ChevronLeft size={18} />
@@ -122,7 +122,9 @@ export default function SidebarNav() {
                   aria-label={collapsed ? label : undefined}
                 >
                   <span className="text-base leading-none">{emoji}</span>
-                  {!collapsed && <span className="whitespace-nowrap">{label}</span>}
+                  {!collapsed && (
+                    <span className="whitespace-nowrap">{label}</span>
+                  )}
                 </Link>
               </li>
             );
