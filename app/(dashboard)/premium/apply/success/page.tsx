@@ -1,4 +1,4 @@
-// app/premium/apply/success/page.tsx
+// app/(dashboard)/premium/apply/success/page.tsx
 import Link from "next/link";
 
 export const metadata = {
