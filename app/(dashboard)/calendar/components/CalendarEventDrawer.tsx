@@ -56,7 +56,7 @@ function RangeSlider({
       max={max}
       step={step}
       className={
-        "relative flex w-full touch-none select-none items-center " +
+        "relative flex w-full select-none items-center " +
         "[--track-h:8px] [--thumb-s:18px] " +
         "z-30 " +
         className
@@ -926,15 +926,15 @@ export default function CalendarEventDrawer(props: DrawerProps) {
             </div>
 
             <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 overflow-hidden">
-  {/* Mobile: allow horizontal swipe for wide tables */}
+  {/* Mobile: horizontal swipe */}
   <div
     className="
       max-h-[50vh]
       overflow-y-auto
       overflow-x-auto
       touch-pan-x
+      [overscroll-behavior-x:contain]
       [-webkit-overflow-scrolling:touch]
-      sm:overflow-x-visible
     "
   >
     <table className="w-full text-xs whitespace-nowrap sm:whitespace-normal min-w-max sm:min-w-0">
