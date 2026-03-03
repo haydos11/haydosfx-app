@@ -37,7 +37,14 @@ export default function PartnerCard({ partner }: { partner: Partner }) {
                 alt={partner.logo.alt}
                 width={56}
                 height={56}
-                className="h-full w-full object-cover"
+                className={cx(
+                  // Keep BlackBull exactly as-is:
+                  partner.slug === "blackbull"
+                    ? "h-full w-full object-cover"
+                    : "object-contain",
+                  // Scale down The5ers only:
+                  partner.slug === "the5ers" ? "h-7 w-auto" : "h-full w-full"
+                )}
               />
             ) : (
               <span className="text-xs text-white/50">Logo</span>
@@ -101,11 +108,12 @@ export default function PartnerCard({ partner }: { partner: Partner }) {
       {!!partner.perks?.length && (
         <div className="mt-6 space-y-4">
           <div className="text-sm font-semibold text-white">
-  Exclusive Referral Perks
-</div>
-<p className="mt-1 text-xs text-white/60">
-  These bonuses are only available when you sign up using my referral link above.
-</p>
+            Exclusive Referral Perks
+          </div>
+          <p className="mt-1 text-xs text-white/60">
+            These bonuses are only available when you sign up using my referral
+            link above.
+          </p>
 
           <div className="space-y-4">
             {partner.perks.map((perk) => (
