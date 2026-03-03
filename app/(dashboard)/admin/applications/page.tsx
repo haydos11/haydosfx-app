@@ -2,6 +2,7 @@ import "server-only";
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase/server";
 
+export const dynamic = "force-dynamic";
 export const metadata = {
   title: "Applications | Admin",
 };
