@@ -18,13 +18,20 @@ import { Icon as Iconify } from "@iconify/react";
 const MAIN = [
   { href: "/currency-strength", label: "Currency Strength", emoji: "💪" },
   { href: "/partners", label: "Partners", emoji: "🤝" },
-  { href: "/services", label: "Services", emoji: "💼" }, // ✅ added
+  { href: "/services", label: "Services", emoji: "💼" },
   { href: "/currencies", label: "Currency Charts", emoji: "💱" },
   { href: "/cot", label: "COT Reports", emoji: "📊" },
   { href: "/economy", label: "Economy", emoji: "🌍" },
   { href: "/calendar", label: "Calendar", emoji: "🗓️" },
-  // { href: "/dev-calendar", label: "Dev-Calendar", emoji: "🗓️" },
 ];
+
+/* ---- Learn item ---- */
+const LEARN = {
+  href: "/learn",
+  label: "Learn",
+  emoji: "🎓",
+  sub: "Core Foundations",
+};
 
 /* ---- sub-nav: Calendar (Lucide) ---- */
 const CAL_SUB = [
@@ -32,26 +39,25 @@ const CAL_SUB = [
   { href: "/calendar/live-news", label: "Live News", Icon: Zap },
 ];
 
-/* ---- sub-nav: Economy (existing only) ---- */
+/* ---- sub-nav: Economy ---- */
 const ECON_SUB = [
   { href: "/economy/us", label: "United States", flag: "circle-flags:us" },
-  { href: "/economy/compare", label: "Compare", iconOnly: true }, // GitCompare
+  { href: "/economy/compare", label: "Compare", iconOnly: true },
 ];
 
 export default function SidebarNav() {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
 
-  // persist collapsed state
   useEffect(() => {
     const v = localStorage.getItem("sidebar:collapsed");
     if (v) setCollapsed(v === "1");
   }, []);
+
   useEffect(() => {
     localStorage.setItem("sidebar:collapsed", collapsed ? "1" : "0");
   }, [collapsed]);
 
-  // widths: collapsed 64px; expanded 224px (narrower than before)
   const WIDTH = collapsed ? "w-16" : "w-56";
   const ITEM_SPACE = "space-y-1.5";
   const ITEM_PAD = collapsed ? "px-0 py-2" : "px-3.5 py-2.5";
@@ -70,41 +76,39 @@ export default function SidebarNav() {
   const liveNewsActive = pathname === "/calendar/live-news";
   const pulseClass = liveNewsActive ? "animate-pulse" : "";
 
+  const inLearn =
+    pathname === LEARN.href || pathname.startsWith(LEARN.href + "/");
+
   return (
     <aside
       className={`${WIDTH} shrink-0 border-r border-white/10 bg-[#0b0b0b] overflow-hidden transition-all duration-300`}
     >
-      {/* Header: fixed height; absolute brand; perfectly-centered toggle */}
+      {/* Header */}
       <div className="relative h-14">
-        {/* Brand (doesn't take width; fades when collapsed) */}
         <div
           className={[
             "absolute left-4 inset-y-0 flex items-center",
             collapsed ? "opacity-0 pointer-events-none" : "opacity-100",
           ].join(" ")}
         >
-          <div className="text-2xl font-semibold tracking-tight">HAYDOSFX</div>
+          <div className="text-2xl font-semibold tracking-tight">
+            HAYDOSFX
+          </div>
         </div>
 
-        {/* Toggle container: pinned to right, centered vertically */}
         <div className="absolute right-2 inset-y-0 flex items-center">
           <button
             onClick={() => setCollapsed(!collapsed)}
             className="grid place-items-center h-8 w-8 rounded-md hover:bg-white/10 transition"
             title={collapsed ? "Expand" : "Collapse"}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            {collapsed ? (
-              <Menu size={18} className="translate-y-[0.5px]" />
-            ) : (
-              <ChevronLeft size={18} />
-            )}
+            {collapsed ? <Menu size={18} /> : <ChevronLeft size={18} />}
           </button>
         </div>
       </div>
 
       <nav className="px-2 pb-8">
-        {/* Main (emoji) */}
+        {/* ===== MAIN NAV ===== */}
         <ul className={ITEM_SPACE}>
           {MAIN.map(({ href, label, emoji }) => {
             const active = isActiveMain(href);
@@ -119,7 +123,6 @@ export default function SidebarNav() {
                     collapsed ? "justify-center" : "gap-3",
                   ].join(" ")}
                   title={collapsed ? label : ""}
-                  aria-label={collapsed ? label : undefined}
                 >
                   <span className="text-base leading-none">{emoji}</span>
                   {!collapsed && (
@@ -129,9 +132,52 @@ export default function SidebarNav() {
               </li>
             );
           })}
+
+          {/* ===== RAIL DIVIDER ===== */}
+          <li className="py-4">
+            <div
+              className={[
+                "flex flex-col items-center",
+                collapsed ? "" : "pl-4 items-start",
+              ].join(" ")}
+            >
+              {/* vertical rail */}
+              <div className="h-7 w-px bg-white/10" />
+              {/* small tick */}
+              <div className="mt-3 h-px w-3 bg-white/10" />
+            </div>
+          </li>
+
+          {/* ===== LEARN ===== */}
+          <li>
+            <Link
+              href={LEARN.href}
+              className={[
+                "flex items-center rounded-md transition-colors",
+                ITEM_PAD,
+                inLearn ? ACTIVE : INACTIVE,
+                collapsed ? "justify-center" : "gap-3",
+              ].join(" ")}
+              title={collapsed ? LEARN.label : ""}
+            >
+              <span className="text-base leading-none">
+                {LEARN.emoji}
+              </span>
+              {!collapsed && (
+                <div className="flex flex-col leading-tight">
+                  <span className="whitespace-nowrap">
+                    {LEARN.label}
+                  </span>
+                  <span className="text-[11px] text-white/45 whitespace-nowrap">
+                    {LEARN.sub}
+                  </span>
+                </div>
+              )}
+            </Link>
+          </li>
         </ul>
 
-        {/* Calendar subnav */}
+        {/* ===== Calendar subnav ===== */}
         {inCalendar && (
           <>
             <div className="mx-1 my-5 border-t border-white/10" />
@@ -150,7 +196,6 @@ export default function SidebarNav() {
                       pathname === "/calendar" ? ACTIVE : INACTIVE,
                       collapsed ? "justify-center" : "gap-2",
                     ].join(" ")}
-                    title={collapsed ? "Back to Calendar" : ""}
                   >
                     <ArrowLeft size={14} />
                     {!collapsed && <span>Back to Calendar</span>}
@@ -169,10 +214,11 @@ export default function SidebarNav() {
                         active ? ACTIVE : INACTIVE,
                         collapsed ? "justify-center" : "gap-2",
                       ].join(" ")}
-                      title={collapsed ? label : ""}
-                      aria-label={collapsed ? label : undefined}
                     >
-                      <Icon size={14} className={isLive ? pulseClass : ""} />
+                      <Icon
+                        size={14}
+                        className={isLive ? pulseClass : ""}
+                      />
                       {!collapsed && <span>{label}</span>}
                     </Link>
                   </li>
@@ -182,7 +228,7 @@ export default function SidebarNav() {
           </>
         )}
 
-        {/* Economy subnav (US flag + Compare only) */}
+        {/* ===== Economy subnav ===== */}
         {inEconomy && (
           <>
             <div className="mx-1 my-5 border-t border-white/10" />
@@ -201,7 +247,6 @@ export default function SidebarNav() {
                       pathname === "/economy" ? ACTIVE : INACTIVE,
                       collapsed ? "justify-center" : "gap-2",
                     ].join(" ")}
-                    title={collapsed ? "Back to Economy" : ""}
                   >
                     <ArrowLeft size={14} />
                     {!collapsed && <span>Back to Economy</span>}
@@ -219,8 +264,6 @@ export default function SidebarNav() {
                         active ? ACTIVE : INACTIVE,
                         collapsed ? "justify-center" : "gap-2",
                       ].join(" ")}
-                      title={collapsed ? label : ""}
-                      aria-label={collapsed ? label : undefined}
                     >
                       {iconOnly ? (
                         <GitCompare size={14} />

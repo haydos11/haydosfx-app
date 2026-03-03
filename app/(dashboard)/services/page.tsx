@@ -1,5 +1,6 @@
 // app/(dashboard)/services/page.tsx
 import Link from "next/link";
+import React from "react";
 import {
   ArrowRight,
   CandlestickChart,
@@ -21,9 +22,14 @@ export const metadata = {
 const LINKS = {
   coachingBooking: "https://buy.stripe.com/4gwbJzfNE0BwfKM5kp",
   premiumSubscribe: "https://buy.stripe.com/bIY4h7gRIbga6acdQX",
-  premiumApplication: "https://www.haydosfx.com/application-form-1",
-  // ✅ Invite-only Discord request (Typeform / Google Form / your app form)
-  discordRequest: "https://discord.gg/TEENQdKuhb",
+
+  // ✅ Your NEW on-site application form route
+  premiumApplication: "/premium/apply",
+
+  // ✅ Invite-only Discord request
+  // If you haven't built /discord/apply yet, change this back to your discord.gg invite
+  discordRequest: "/discord/apply",
+  // discordRequest: "https://discord.gg/TEENQdKuhb",
 };
 
 const TAGS = [
@@ -62,6 +68,10 @@ const PILLARS = [
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
+}
+
+function isExternal(href: string) {
+  return href.startsWith("http://") || href.startsWith("https://");
 }
 
 function PillarCard({
@@ -123,6 +133,9 @@ function PriceCard({
   secondaryLabel?: string;
   featured?: boolean;
 }) {
+  const primaryExternal = isExternal(primaryHref);
+  const secondaryExternal = secondaryHref ? isExternal(secondaryHref) : false;
+
   return (
     <div
       className={cn(
@@ -189,7 +202,7 @@ function PriceCard({
                 "mt-[3px] grid h-5 w-5 place-items-center rounded-md border",
                 featured
                   ? "border-indigo-400/25 bg-indigo-500/10"
-                  : "border-white/10 bg-white/[0.03]"
+                  : "border border-white/10 bg-white/[0.03]"
               )}
             >
               <Check className="h-3.5 w-3.5 text-slate-200" />
@@ -208,8 +221,8 @@ function PriceCard({
               ? "border border-indigo-400/30 bg-indigo-500/20 text-indigo-100 hover:bg-indigo-500/30"
               : "border border-white/10 bg-white/[0.05] text-slate-100 hover:bg-white/[0.08]"
           )}
-          target="_blank"
-          rel="noreferrer"
+          target={primaryExternal ? "_blank" : undefined}
+          rel={primaryExternal ? "noreferrer" : undefined}
         >
           {primaryLabel} <ArrowRight className="h-4 w-4" />
         </Link>
@@ -218,8 +231,8 @@ function PriceCard({
           <Link
             href={secondaryHref}
             className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-white/[0.07]"
-            target="_blank"
-            rel="noreferrer"
+            target={secondaryExternal ? "_blank" : undefined}
+            rel={secondaryExternal ? "noreferrer" : undefined}
           >
             {secondaryLabel}
           </Link>
@@ -244,14 +257,15 @@ export default function ServicesPage() {
           </p>
 
           <h1 className="mt-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">
-            A professional trading workflow — taught live, refined with feedback, and supported by tools.
+            A professional trading workflow — taught live, refined with feedback,
+            and supported by tools.
           </h1>
 
           <p className="mt-4 text-base leading-relaxed text-slate-300">
             Pick the level of support you want — from{" "}
             <span className="text-slate-200">1:1 coaching</span> to the{" "}
-            <span className="text-slate-200">Premium membership</span> with streams, analysis,
-            Discord, and proprietary indicators.
+            <span className="text-slate-200">Premium membership</span> with streams,
+            analysis, Discord, and proprietary indicators.
           </p>
 
           {/* premium pills */}
@@ -383,8 +397,8 @@ export default function ServicesPage() {
               <Link
                 href={LINKS.discordRequest}
                 className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-400/30 bg-indigo-500/20 px-4 py-2 text-sm font-semibold text-indigo-100 transition hover:bg-indigo-500/30"
-                target="_blank"
-                rel="noreferrer"
+                target={isExternal(LINKS.discordRequest) ? "_blank" : undefined}
+                rel={isExternal(LINKS.discordRequest) ? "noreferrer" : undefined}
               >
                 Request Discord Access <Mail className="h-4 w-4" />
               </Link>
