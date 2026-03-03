@@ -297,8 +297,17 @@ export default function CalendarTable({
       <div className="h-1 w-full bg-gradient-to-r from-indigo-500/30 via-fuchsia-500/30 to-emerald-500/30" />
 
       {/* IMPORTANT: stabilize scrollbars to stop horizontal flicker */}
-      <div className="max-h-[72vh] overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]">
-        <table className="w-full table-fixed text-[12.5px] leading-tight">
+      <div
+  className="
+    max-h-[72vh]
+    overflow-y-auto
+    overflow-x-auto sm:overflow-x-hidden
+    touch-pan-x
+    [-webkit-overflow-scrolling:touch]
+    [scrollbar-gutter:stable]
+  "
+>
+        <table className="min-w-[920px] w-full table-fixed text-[12.5px] leading-tight">
           <thead className="sticky top-0 z-10 bg-[#0b0b0b]/80 backdrop-blur text-slate-400 border-b border-white/10">
             <tr className="[&>th]:px-2.5 [&>th]:py-1.5 [&>th]:text-left [&>th]:font-medium [&>th]:whitespace-nowrap">
               {/* Simplified header — no timezone text here */}
