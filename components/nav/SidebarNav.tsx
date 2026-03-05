@@ -11,11 +11,14 @@ import {
   Menu,
   ArrowLeft,
   Zap,
+  LayoutDashboard,
 } from "lucide-react";
 import { Icon as Iconify } from "@iconify/react";
 
 /* ---- main nav (emoji) ---- */
 const MAIN = [
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+
   { href: "/currency-strength", label: "Currency Strength", emoji: "💪" },
   { href: "/partners", label: "Partners", emoji: "🤝" },
   { href: "/services", label: "Services", emoji: "💼" },
@@ -110,7 +113,7 @@ export default function SidebarNav() {
       <nav className="px-2 pb-8">
         {/* ===== MAIN NAV ===== */}
         <ul className={ITEM_SPACE}>
-          {MAIN.map(({ href, label, emoji }) => {
+          {MAIN.map(({ href, label, emoji, icon: Icon }: any) => {
             const active = isActiveMain(href);
             return (
               <li key={href}>
@@ -124,7 +127,11 @@ export default function SidebarNav() {
                   ].join(" ")}
                   title={collapsed ? label : ""}
                 >
-                  <span className="text-base leading-none">{emoji}</span>
+                  {Icon ? (
+  <Icon size={16} />
+) : (
+  <span className="text-base leading-none">{emoji}</span>
+)}
                   {!collapsed && (
                     <span className="whitespace-nowrap">{label}</span>
                   )}

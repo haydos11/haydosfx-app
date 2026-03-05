@@ -28,7 +28,7 @@ const LINKS = {
 
   // ✅ Invite-only Discord request
   // If you haven't built /discord/apply yet, change this back to your discord.gg invite
-  discordRequest: "/discord/apply",
+  discordRequest: "/services/discord/apply",
   // discordRequest: "https://discord.gg/TEENQdKuhb",
 };
 
@@ -373,30 +373,33 @@ export default function ServicesPage() {
       </section>
 
       {/* ✅ Free Discord (Invite Only) */}
-      <section className="mt-10">
-        <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-b from-white/[0.05] to-white/[0.02] p-7 sm:p-8">
-          <div className="pointer-events-none absolute -right-20 -bottom-20 h-64 w-64 rounded-full bg-indigo-500/10 blur-3xl" />
+      {/* ✅ Free Discord (Invite Only) */}
+<section className="mt-10">
+  <div className="relative overflow-hidden rounded-3xl border border-yellow-400/30 bg-gradient-to-b from-yellow-500/12 via-yellow-400/6 to-white/[0.02] p-7 sm:p-8 shadow-lg">
+          <div className="pointer-events-none absolute -right-20 -bottom-20 h-64 w-64 rounded-full bg-yellow-400/20 blur-3xl" />
 
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="max-w-2xl">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-semibold tracking-[0.12em] text-slate-200">
+              <div className="inline-flex items-center gap-2 rounded-full border border-yellow-400/40 bg-yellow-500/15 px-3 py-1 text-[11px] font-semibold tracking-[0.12em] text-yellow-100">
                 <ShieldCheck className="h-4 w-4 text-indigo-200" />
                 FREE DISCORD • INVITE ONLY
               </div>
 
               <h3 className="mt-3 text-xl font-semibold text-white">
                 Join the community (invite-only)
+                Free section available to all traders.
+Premium members receive full Discord access.
               </h3>
 
               <p className="mt-2 text-sm leading-relaxed text-slate-300">
-                You don’t need Premium to apply. Discord access is invite-only to keep the group high quality and avoid spam bots.
-              </p>
+  Premium members receive full access to the private Discord with all streams, analysis and trading channels. There is also a smaller free community section available — access is invite-only to keep the group high quality and avoid spam bots.
+</p>
             </div>
 
             <div className="flex flex-col gap-2 sm:flex-row">
               <Link
                 href={LINKS.discordRequest}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-400/30 bg-indigo-500/20 px-4 py-2 text-sm font-semibold text-indigo-100 transition hover:bg-indigo-500/30"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-yellow-400/40 bg-yellow-500/20 px-4 py-2 text-sm font-semibold text-yellow-100 transition hover:bg-yellow-500/30"
                 target={isExternal(LINKS.discordRequest) ? "_blank" : undefined}
                 rel={isExternal(LINKS.discordRequest) ? "noreferrer" : undefined}
               >
