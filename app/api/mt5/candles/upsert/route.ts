@@ -60,12 +60,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const supabaseUrl = process.env.DATA_SUPABASE_URL;
+    const serviceRoleKey = process.env.DATA_SUPABASE_SERVICE_ROLE_KEY;
 
     if (!supabaseUrl || !serviceRoleKey) {
       return NextResponse.json(
-        { ok: false, error: "Missing Supabase env vars" },
+        {
+          ok: false,
+          error: "Missing DATA_SUPABASE_URL or DATA_SUPABASE_SERVICE_ROLE_KEY",
+        },
         { status: 500 }
       );
     }
@@ -137,12 +140,10 @@ export async function POST(req: NextRequest) {
       auth: { persistSession: false },
     });
 
-    const { error } = await supabase
-      .from("fx_candles")
-      .upsert(rows, {
-        onConflict: "symbol,timeframe,time",
-        ignoreDuplicates: false,
-      });
+    const { error } = await supabase.from("fx_candles").upsert(rows, {
+      onConflict: "symbol,timeframe,time",
+      ignoreDuplicates: false,
+    });
 
     if (error) {
       return NextResponse.json(
