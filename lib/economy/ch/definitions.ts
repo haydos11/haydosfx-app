@@ -1,0 +1,245 @@
+// lib/economy/ch/definitions.ts
+
+import type { CalendarIndicatorSet } from "@/lib/economy/types";
+
+export const CH_CALENDAR_SETS: CalendarIndicatorSet = {
+  core: [
+    {
+      slug: "ch-cpi-yoy",
+      label: "CPI (YoY)",
+      units: "pct",
+      decimals: 1,
+      preferred: true,
+      exactNames: ["CPI y/y"],
+    },
+    {
+      slug: "ch-gdp-qoq",
+      label: "GDP (QoQ)",
+      units: "pct",
+      decimals: 1,
+      preferred: true,
+      exactNames: ["GDP q/q"],
+    },
+    {
+      slug: "ch-unemployment-rate",
+      label: "Unemployment Rate",
+      units: "pct",
+      decimals: 1,
+      preferred: true,
+      exactNames: ["Unemployment Rate"],
+    },
+    {
+      slug: "ch-snb-rate",
+      label: "SNB Rate",
+      units: "pct",
+      decimals: 2,
+      preferred: true,
+      exactNames: ["SNB Interest Rate Decision"],
+    },
+    {
+      slug: "ch-retail-sales-yoy",
+      label: "Retail Sales (YoY)",
+      units: "pct",
+      decimals: 1,
+      exactNames: ["Retail Sales y/y"],
+    },
+    {
+      slug: "ch-manufacturing-pmi",
+      label: "Manufacturing PMI",
+      units: "level",
+      decimals: 1,
+      exactNames: ["procure.ch Manufacturing PMI"],
+      aliases: ["manufacturing pmi"],
+    },
+    {
+      slug: "ch-kof-barometer",
+      label: "KOF Economic Barometer",
+      units: "level",
+      decimals: 1,
+      exactNames: ["KOF Economic Barometer"],
+    },
+    {
+      slug: "ch-trade-balance",
+      label: "Trade Balance",
+      units: "level",
+      decimals: 0,
+      exactNames: ["Trade Balance"],
+    },
+    {
+      slug: "ch-ppi-yoy",
+      label: "PPI (YoY)",
+      units: "pct",
+      decimals: 1,
+      exactNames: ["PPI y/y"],
+    },
+    {
+      slug: "ch-foreign-reserves",
+      label: "Foreign Currency Reserves",
+      units: "level",
+      decimals: 0,
+      exactNames: ["Foreign Currency Reserves"],
+    },
+    {
+      slug: "ch-consumer-climate",
+      label: "Consumer Climate",
+      units: "level",
+      decimals: 1,
+      exactNames: ["Consumer Climate"],
+    },
+    {
+      slug: "ch-cftc-chf-net",
+      label: "CFTC CHF Non-Commercial Net Positions",
+      units: "level",
+      decimals: 0,
+      exactNames: ["CFTC CHF Non-Commercial Net Positions"],
+    },
+  ],
+
+  prices: [
+    {
+      slug: "ch-cpi-yoy",
+      label: "CPI (YoY)",
+      units: "pct",
+      decimals: 1,
+      exactNames: ["CPI y/y"],
+    },
+    {
+      slug: "ch-cpi-mom",
+      label: "CPI (MoM)",
+      units: "pct",
+      decimals: 1,
+      exactNames: ["CPI m/m"],
+    },
+    {
+      slug: "ch-ppi-yoy",
+      label: "PPI (YoY)",
+      units: "pct",
+      decimals: 1,
+      exactNames: ["PPI y/y"],
+    },
+    {
+      slug: "ch-ppi-mom",
+      label: "PPI (MoM)",
+      units: "pct",
+      decimals: 1,
+      exactNames: ["PPI m/m"],
+    },
+  ],
+
+  growth: [
+    {
+      slug: "ch-gdp-qoq",
+      label: "GDP (QoQ)",
+      units: "pct",
+      decimals: 1,
+      exactNames: ["GDP q/q"],
+    },
+    {
+      slug: "ch-gdp-yoy",
+      label: "GDP (YoY)",
+      units: "pct",
+      decimals: 1,
+      exactNames: ["GDP y/y"],
+    },
+    {
+      slug: "ch-retail-sales-yoy",
+      label: "Retail Sales (YoY)",
+      units: "pct",
+      decimals: 1,
+      exactNames: ["Retail Sales y/y"],
+    },
+    {
+      slug: "ch-industrial-production-yoy",
+      label: "Industrial Production (YoY)",
+      units: "pct",
+      decimals: 1,
+      exactNames: ["Industrial Production y/y"],
+    },
+    {
+      slug: "ch-kof-barometer",
+      label: "KOF Economic Barometer",
+      units: "level",
+      decimals: 1,
+      exactNames: ["KOF Economic Barometer"],
+    },
+  ],
+
+  labour: [
+    {
+      slug: "ch-unemployment-rate",
+      label: "Unemployment Rate",
+      units: "pct",
+      decimals: 1,
+      exactNames: ["Unemployment Rate"],
+    },
+    {
+      slug: "ch-unemployment-rate-nsa",
+      label: "Unemployment Rate (NSA)",
+      units: "pct",
+      decimals: 1,
+      exactNames: ["Unemployment Rate n.s.a."],
+    },
+    {
+      slug: "ch-employment-level",
+      label: "Employment Level",
+      units: "level",
+      decimals: 0,
+      exactNames: ["Employment Level"],
+    },
+  ],
+
+  policy: [
+    {
+      slug: "ch-snb-rate",
+      label: "SNB Rate",
+      units: "pct",
+      decimals: 2,
+      exactNames: ["SNB Interest Rate Decision"],
+    },
+    {
+      slug: "ch-snb-mpa",
+      label: "SNB Monetary Policy Assessment",
+      units: "level",
+      decimals: 1,
+      exactNames: ["SNB Monetary Policy Assessment"],
+    },
+    {
+      slug: "ch-foreign-reserves",
+      label: "Foreign Currency Reserves",
+      units: "level",
+      decimals: 0,
+      exactNames: ["Foreign Currency Reserves"],
+    },
+  ],
+
+  sentiment: [
+    {
+      slug: "ch-manufacturing-pmi",
+      label: "Manufacturing PMI",
+      units: "level",
+      decimals: 1,
+      exactNames: ["procure.ch Manufacturing PMI"],
+    },
+    {
+      slug: "ch-kof-barometer",
+      label: "KOF Economic Barometer",
+      units: "level",
+      decimals: 1,
+      exactNames: ["KOF Economic Barometer"],
+    },
+    {
+      slug: "ch-credit-suisse-expectations",
+      label: "CS Economic Expectations",
+      units: "level",
+      decimals: 1,
+      exactNames: ["Credit Suisse Economic Expectations"],
+    },
+    {
+      slug: "ch-consumer-climate",
+      label: "Consumer Climate",
+      units: "level",
+      decimals: 1,
+      exactNames: ["Consumer Climate"],
+    },
+  ],
+};

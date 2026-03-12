@@ -27,6 +27,41 @@ export default function EconomyHub() {
         subtitle="Core macro dashboard"
       />
       <Card
+        href="/economy/uk"
+        title="United Kingdom"
+        subtitle="Calendar-driven macro snapshot"
+      />
+        <Card
+        href="/economy/eu"
+        title="Eurozone"
+        subtitle="Calendar-driven macro snapshot"
+      />
+      <Card
+        href="/economy/jp"
+        title="Japan"
+        subtitle="Calendar-driven macro snapshot"
+      />
+      <Card
+        href="/economy/ca"
+        title="Canada"
+        subtitle="Calendar-driven macro snapshot"
+      />
+      <Card
+        href="/economy/ch"
+        title="Switzerland"
+        subtitle="Calendar-driven macro snapshot"
+      />
+      <Card
+        href="/economy/au"
+        title="Australia"
+        subtitle="Calendar-driven macro snapshot"
+      />
+      <Card
+        href="/economy/nz"
+        title="New Zealand"
+        subtitle="Calendar-driven macro snapshot"
+      />
+      <Card
         href="/economy/compare"
         title="Compare"
         subtitle="Cross-country & cross-metric"

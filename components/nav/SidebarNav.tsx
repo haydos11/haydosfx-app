@@ -23,6 +23,7 @@ const MAIN = [
   { href: "/partners", label: "Partners", emoji: "🤝" },
   { href: "/services", label: "Services", emoji: "💼" },
   { href: "/currencies", label: "Currency Charts", emoji: "💱" },
+  { href: "/test-candles", label: "Test Candles", emoji: "📈" },
   { href: "/cot", label: "COT Reports", emoji: "📊" },
   { href: "/economy", label: "Economy", emoji: "🌍" },
   { href: "/calendar", label: "Calendar", emoji: "🗓️" },
@@ -45,6 +46,13 @@ const CAL_SUB = [
 /* ---- sub-nav: Economy ---- */
 const ECON_SUB = [
   { href: "/economy/us", label: "United States", flag: "circle-flags:us" },
+  { href: "/economy/uk", label: "United Kingdom", flag: "circle-flags:gb" },
+  { href: "/economy/au", label: "Australia", flag: "circle-flags:au" },
+  { href: "/economy/eu", label: "Eurozone", flag: "circle-flags:eu" },
+  { href: "/economy/jp", label: "Japan", flag: "circle-flags:jp" },
+  { href: "/economy/ca", label: "Canada", flag: "circle-flags:ca" },
+  { href: "/economy/ch", label: "Switzerland", flag: "circle-flags:ch" },
+  { href: "/economy/nz", label: "New Zealand", flag: "circle-flags:nz" },
   { href: "/economy/compare", label: "Compare", iconOnly: true },
 ];
 
@@ -64,7 +72,7 @@ export default function SidebarNav() {
   const WIDTH = collapsed ? "w-16" : "w-56";
   const ITEM_SPACE = "space-y-1.5";
   const ITEM_PAD = collapsed ? "px-0 py-2" : "px-3.5 py-2.5";
-  const ACTIVE = "text-white";
+  const ACTIVE = "text-white font-medium";
   const INACTIVE = "text-slate-300 hover:text-white";
 
   const isActiveMain = (href: string) =>
@@ -84,10 +92,10 @@ export default function SidebarNav() {
 
   return (
     <aside
-      className={`${WIDTH} shrink-0 border-r border-white/10 bg-[#0b0b0b] overflow-hidden transition-all duration-300`}
+      className={`${WIDTH} shrink-0 border-r border-white/10 bg-[#0b0b0b] transition-all duration-300 h-screen flex flex-col min-h-0`}
     >
       {/* Header */}
-      <div className="relative h-14">
+      <div className="relative h-14 shrink-0">
         <div
           className={[
             "absolute left-4 inset-y-0 flex items-center",
@@ -110,7 +118,7 @@ export default function SidebarNav() {
         </div>
       </div>
 
-      <nav className="px-2 pb-8">
+      <nav className="px-2 pb-8 overflow-y-auto min-h-0 flex-1">
         {/* ===== MAIN NAV ===== */}
         <ul className={ITEM_SPACE}>
           {MAIN.map(({ href, label, emoji, icon: Icon }: any) => {
@@ -128,10 +136,10 @@ export default function SidebarNav() {
                   title={collapsed ? label : ""}
                 >
                   {Icon ? (
-  <Icon size={16} />
-) : (
-  <span className="text-base leading-none">{emoji}</span>
-)}
+                    <Icon size={16} />
+                  ) : (
+                    <span className="text-base leading-none">{emoji}</span>
+                  )}
                   {!collapsed && (
                     <span className="whitespace-nowrap">{label}</span>
                   )}
@@ -140,20 +148,10 @@ export default function SidebarNav() {
             );
           })}
 
-          {/* ===== RAIL DIVIDER ===== */}
-          <li className="py-4">
-            <div
-              className={[
-                "flex flex-col items-center",
-                collapsed ? "" : "pl-4 items-start",
-              ].join(" ")}
-            >
-              {/* vertical rail */}
-              <div className="h-7 w-px bg-white/10" />
-              {/* small tick */}
-              <div className="mt-3 h-px w-3 bg-white/10" />
-            </div>
-          </li>
+          {/* ===== SIMPLE DIVIDER ABOVE LEARN ===== */}
+<li className="pt-3 pb-2">
+  <div className="mx-1 border-t border-white/10" />
+</li>
 
           {/* ===== LEARN ===== */}
           <li>
@@ -167,14 +165,10 @@ export default function SidebarNav() {
               ].join(" ")}
               title={collapsed ? LEARN.label : ""}
             >
-              <span className="text-base leading-none">
-                {LEARN.emoji}
-              </span>
+              <span className="text-base leading-none">{LEARN.emoji}</span>
               {!collapsed && (
                 <div className="flex flex-col leading-tight">
-                  <span className="whitespace-nowrap">
-                    {LEARN.label}
-                  </span>
+                  <span className="whitespace-nowrap">{LEARN.label}</span>
                   <span className="text-[11px] text-white/45 whitespace-nowrap">
                     {LEARN.sub}
                   </span>
@@ -193,13 +187,13 @@ export default function SidebarNav() {
                 Calendar
               </div>
             )}
-            <ul className="mt-2 space-y-1.5">
+            <ul className="mt-2 space-y-1">
               {calendarSubpage && (
                 <li>
                   <Link
                     href="/calendar"
                     className={[
-                      "flex items-center rounded-md px-3 py-2 transition-colors",
+                      "flex items-center rounded-md px-3 py-2 transition-colors text-sm",
                       pathname === "/calendar" ? ACTIVE : INACTIVE,
                       collapsed ? "justify-center" : "gap-2",
                     ].join(" ")}
@@ -217,7 +211,7 @@ export default function SidebarNav() {
                     <Link
                       href={href}
                       className={[
-                        "flex items-center rounded-md px-3 py-2 transition-colors",
+                        "flex items-center rounded-md px-3 py-2 transition-colors text-sm",
                         active ? ACTIVE : INACTIVE,
                         collapsed ? "justify-center" : "gap-2",
                       ].join(" ")}
@@ -244,13 +238,13 @@ export default function SidebarNav() {
                 Economy
               </div>
             )}
-            <ul className="mt-2 space-y-1.5">
+            <ul className="mt-2 space-y-1">
               {economySubpage && (
                 <li>
                   <Link
                     href="/economy"
                     className={[
-                      "flex items-center rounded-md px-3 py-2 transition-colors",
+                      "flex items-center rounded-md px-3 py-2 transition-colors text-sm",
                       pathname === "/economy" ? ACTIVE : INACTIVE,
                       collapsed ? "justify-center" : "gap-2",
                     ].join(" ")}
@@ -267,17 +261,18 @@ export default function SidebarNav() {
                     <Link
                       href={href}
                       className={[
-                        "flex items-center rounded-md px-3 py-2 transition-colors",
+                        "flex items-center rounded-md px-3 py-2 transition-colors text-[13px]",
                         active ? ACTIVE : INACTIVE,
                         collapsed ? "justify-center" : "gap-2",
                       ].join(" ")}
+                      title={collapsed ? label : ""}
                     >
                       {iconOnly ? (
                         <GitCompare size={14} />
                       ) : (
                         <Iconify icon={flag!} width={14} height={14} />
                       )}
-                      {!collapsed && <span>{label}</span>}
+                      {!collapsed && <span className="truncate">{label}</span>}
                     </Link>
                   </li>
                 );

@@ -54,12 +54,20 @@ export function EconCard({
   height = 180,
   showTrend = false,
 }: Props) {
-  const fmtLatest = (v: number | null) =>
-    v == null || !Number.isFinite(v)
-      ? "—"
-      : units === "pct"
-      ? `${v.toFixed(decimals)}%`
-      : v.toLocaleString(undefined, { maximumFractionDigits: decimals });
+  function compactNumber(v: number, decimals = 1): string {
+  const a = Math.abs(v);
+  if (a >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(decimals).replace(/\.0$/, "")}B`;
+  if (a >= 1_000_000) return `${(v / 1_000_000).toFixed(decimals).replace(/\.0$/, "")}M`;
+  if (a >= 1_000) return `${(v / 1_000).toFixed(decimals).replace(/\.0$/, "")}K`;
+  return v.toLocaleString(undefined, { maximumFractionDigits: decimals });
+}
+
+const fmtLatest = (v: number | null) =>
+  v == null || !Number.isFinite(v)
+    ? "—"
+    : units === "pct"
+    ? `${v.toFixed(decimals)}%`
+    : compactNumber(v, decimals);
 
   const axisColor = "rgba(255,255,255,0.18)";
   const gridColor = "rgba(255,255,255,0.04)";
