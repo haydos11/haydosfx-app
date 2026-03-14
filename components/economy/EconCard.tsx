@@ -35,45 +35,52 @@ function buildTrend(points: Point[], units: "level" | "pct") {
   return { symbol, colorClass, a3Text: fmt(a3), a6Text: fmt(a6) };
 }
 
+function formatLatestDate(date: string | null | undefined) {
+  if (!date) return null;
+  const d = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return date;
+
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 type Props = {
   title: string;
   latest: number | null;
+  latestDate?: string | null;
   units?: "level" | "pct";
   decimals?: number;
   points: Point[];
   height?: number;
-  showTrend?: boolean; // global toggle
+  showTrend?: boolean;
 };
 
 export function EconCard({
   title,
   latest,
+  latestDate = null,
   units = "level",
   decimals = 2,
   points,
   height = 180,
   showTrend = false,
 }: Props) {
-  function compactNumber(v: number, decimals = 1): string {
-  const a = Math.abs(v);
-  if (a >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(decimals).replace(/\.0$/, "")}B`;
-  if (a >= 1_000_000) return `${(v / 1_000_000).toFixed(decimals).replace(/\.0$/, "")}M`;
-  if (a >= 1_000) return `${(v / 1_000).toFixed(decimals).replace(/\.0$/, "")}K`;
-  return v.toLocaleString(undefined, { maximumFractionDigits: decimals });
-}
-
-const fmtLatest = (v: number | null) =>
-  v == null || !Number.isFinite(v)
-    ? "—"
-    : units === "pct"
-    ? `${v.toFixed(decimals)}%`
-    : compactNumber(v, decimals);
+  const fmtLatest = (v: number | null) =>
+    v == null || !Number.isFinite(v)
+      ? "—"
+      : units === "pct"
+      ? `${v.toFixed(decimals)}%`
+      : v.toLocaleString(undefined, { maximumFractionDigits: decimals });
 
   const axisColor = "rgba(255,255,255,0.18)";
   const gridColor = "rgba(255,255,255,0.04)";
   const labelColor = "rgba(255,255,255,0.55)";
 
   const trend = buildTrend(points, units);
+  const latestDateText = formatLatestDate(latestDate);
 
   const series: LineSeriesOption = {
     type: "line",
@@ -81,7 +88,6 @@ const fmtLatest = (v: number | null) =>
     showSymbol: false,
     lineStyle: { width: 2 },
     areaStyle: { opacity: 0.06 },
-    // ECharts time series accepts [time,value] tuples
     data: points.map<[string, number]>((p) => [p.date, p.value]),
   };
 
@@ -121,16 +127,23 @@ const fmtLatest = (v: number | null) =>
 
   return (
     <div className="rounded-xl border border-white/5 bg-black/40 p-4">
-      {/* Header: big latest on right, title on left (match dual) */}
-      <div className="mb-1 flex items-center justify-between">
+      <div className="mb-1 flex items-start justify-between gap-3">
         <div className="text-sm text-slate-200">{title}</div>
-        <div className="flex items-baseline gap-2">
-          <div className="text-3xl font-semibold">{fmtLatest(latest)}</div>
-          <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs">Latest</span>
+
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-baseline gap-2">
+            <div className="text-3xl font-semibold">{fmtLatest(latest)}</div>
+            <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs">Latest</span>
+          </div>
+
+          {latestDateText && (
+            <div className="text-[11px] text-slate-400">
+              {latestDateText}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* ROC row (same style as dual) */}
       {showTrend && trend && (
         <div className="mb-1 text-[11px] text-slate-400">
           ROC 3m vs 6m:&nbsp;

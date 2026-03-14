@@ -174,6 +174,7 @@ export default function EuEconomyPage() {
             key={`${s.slug ?? s.id}:${range}:${idx}`}
             title={s.label}
             latest={s.latest}
+            latestDate={s.latestDate}
             units={s.units}
             decimals={s.decimals}
             points={s.points}

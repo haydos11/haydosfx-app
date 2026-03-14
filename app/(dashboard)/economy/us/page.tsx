@@ -153,6 +153,7 @@ export default function UsEconomyPage() {
             key={s.slug ?? `${s.id}:${s.label}:${idx}`}
             title={s.label}
             latest={s.latest}
+            latestDate={s.latestDate}
             units={s.units}
             decimals={s.decimals}
             points={s.points}
