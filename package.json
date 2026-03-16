@@ -33,6 +33,7 @@
     "dotenv": "^17.2.2",
     "echarts": "^5.6.0",
     "echarts-for-react": "^3.0.6",
+    "framer-motion": "^12.37.0",
     "i18n-iso-countries": "^7.14.0",
     "lightweight-charts": "^5.1.0",
     "lucide-react": "^0.542.0",

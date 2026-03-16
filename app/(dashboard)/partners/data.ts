@@ -73,7 +73,7 @@ export const PARTNERS: Partner[] = [
       {
         title: "Sign Up Bonus",
         items: [
-          "50% Deposit Bonus up to $1,000.",
+          "50% Deposit Bonus up to $1,000. For MT5 accounts only",
           "Example: Deposit $2,000 → receive $1,000 extra trading credit.",
         ],
       },

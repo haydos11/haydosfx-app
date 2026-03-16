@@ -22,8 +22,7 @@ const MAIN = [
   { href: "/currency-strength", label: "Currency Strength", emoji: "💪" },
   { href: "/partners", label: "Partners", emoji: "🤝" },
   { href: "/services", label: "Services", emoji: "💼" },
-  { href: "/currencies", label: "Currency Charts", emoji: "💱" },
-  { href: "/test-candles", label: "Test Candles", emoji: "📈" },
+  //{ href: "/currencies", label: "Currency Charts", emoji: "💱" },
   { href: "/cot", label: "COT Reports", emoji: "📊" },
   { href: "/economy", label: "Economy", emoji: "🌍" },
   { href: "/calendar", label: "Calendar", emoji: "🗓️" },
@@ -47,11 +46,11 @@ const CAL_SUB = [
 const ECON_SUB = [
   { href: "/economy/us", label: "United States", flag: "circle-flags:us" },
   { href: "/economy/uk", label: "United Kingdom", flag: "circle-flags:gb" },
-  { href: "/economy/au", label: "Australia", flag: "circle-flags:au" },
   { href: "/economy/eu", label: "Eurozone", flag: "circle-flags:eu" },
   { href: "/economy/jp", label: "Japan", flag: "circle-flags:jp" },
   { href: "/economy/ca", label: "Canada", flag: "circle-flags:ca" },
   { href: "/economy/ch", label: "Switzerland", flag: "circle-flags:ch" },
+  { href: "/economy/au", label: "Australia", flag: "circle-flags:au" },
   { href: "/economy/nz", label: "New Zealand", flag: "circle-flags:nz" },
   { href: "/economy/compare", label: "Compare", iconOnly: true },
 ];
