@@ -181,10 +181,10 @@ type PriceRow = {
 
 export async function GET(
   req: NextRequest,
-  context: { params: { market: string } }
+  context: { params: Promise<{ market: string }> }
 ) {
   try {
-    const market = context?.params?.market;
+    const { market } = await context.params;
 
     if (!market) {
       return NextResponse.json({ error: "Missing market param" }, { status: 400 });
@@ -207,6 +207,11 @@ export async function GET(
     const isFx = FX_DB_CODES.has(dbCode);
     const range = (req.nextUrl.searchParams.get("range") ?? "5y").toLowerCase();
     const startDate = cutoffFor(range);
+
+    const recentCountRaw = Number(req.nextUrl.searchParams.get("recent") ?? "12");
+    const recentCount = Number.isFinite(recentCountRaw)
+      ? Math.max(12, Math.min(52, Math.floor(recentCountRaw)))
+      : 12;
 
     const supabase = getSupabaseAdmin();
 
@@ -328,6 +333,8 @@ export async function GET(
 
     const report_price: (number | null)[] = [];
     const release_price: (number | null)[] = [];
+    const indexed_report_price: (number | null)[] = [];
+    const indexed_release_price: (number | null)[] = [];
 
     const large_usd: (number | null)[] = [];
     const small_usd: (number | null)[] = [];
@@ -380,6 +387,9 @@ export async function GET(
       if (isFx) {
         const rxn = reactionMap.get(rowDate);
 
+        const rawReportPrice = toNum(rxn?.report_price);
+        const rawReleasePrice = toNum(rxn?.release_price);
+
         const fxReportPrice = toNum(rxn?.reaction_report_price);
         const fxReleasePrice = toNum(rxn?.reaction_release_price);
         const fxMovePct = calcMovePct(fxReportPrice, fxReleasePrice);
@@ -389,8 +399,11 @@ export async function GET(
           baseBias;
         const fxReaction = calcReactionType(fxBias, fxMovePct);
 
-        report_price.push(fxReportPrice);
-        release_price.push(fxReleasePrice);
+        report_price.push(rawReportPrice);
+        release_price.push(rawReleasePrice);
+        indexed_report_price.push(fxReportPrice);
+        indexed_release_price.push(fxReleasePrice);
+
         bias.push(fxBias);
         move_pct.push(fxMovePct);
         price_direction.push(fxDirection);
@@ -411,6 +424,9 @@ export async function GET(
 
         report_price.push(computedReportPrice);
         release_price.push(computedReleasePrice);
+        indexed_report_price.push(computedReportPrice);
+        indexed_release_price.push(computedReleasePrice);
+
         bias.push(baseBias);
         move_pct.push(computedMovePct);
         price_direction.push(computedDirection);
@@ -422,7 +438,7 @@ export async function GET(
     const recentBase = rows
       .slice()
       .reverse()
-      .slice(0, 12)
+      .slice(0, recentCount)
       .map((row) => {
         const rowDate = isoDate(row.report_date);
 
@@ -432,6 +448,9 @@ export async function GET(
 
         if (isFx) {
           const rxn = reactionMap.get(rowDate);
+
+          const rawReportPrice = toNum(rxn?.report_price);
+          const rawReleasePrice = toNum(rxn?.release_price);
 
           const fxReportPrice = toNum(rxn?.reaction_report_price);
           const fxReleasePrice = toNum(rxn?.reaction_release_price);
@@ -453,8 +472,10 @@ export async function GET(
             small_traders_net: toNum(row.net_nonreportable) ?? 0,
             commercials_net: toNum(row.net_commercial) ?? 0,
 
-            report_price: fxReportPrice,
-            release_price: fxReleasePrice,
+            report_price: rawReportPrice,
+            release_price: rawReleasePrice,
+            indexed_report_price: fxReportPrice,
+            indexed_release_price: fxReleasePrice,
 
             bias: fxBias,
             move_pct_report_to_release: fxMovePct,
@@ -492,6 +513,8 @@ export async function GET(
 
           report_price: computedReportPrice,
           release_price: computedReleasePrice,
+          indexed_report_price: computedReportPrice,
+          indexed_release_price: computedReleasePrice,
 
           bias: baseBias,
           move_pct_report_to_release: computedMovePct,
@@ -591,6 +614,9 @@ export async function GET(
 
       report_price,
       release_price,
+      indexed_report_price,
+      indexed_release_price,
+
       large_usd,
       small_usd,
       comm_usd,

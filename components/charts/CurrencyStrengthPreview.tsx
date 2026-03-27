@@ -48,7 +48,7 @@ type RebaseMode = "range" | "session";
 type SessionAnchor = "asia" | "london" | "newyork";
 type SmoothingKey = "off" | "3" | "5" | "8" | "13" | "21" | "34" | "55";
 type NewsFilterKey = "off" | "high" | "mediumHigh";
-type DayMarkersKey = "off" | "on";
+type CalendarMarkersKey = "off" | "day" | "week" | "both";
 
 type DriverSeriesMap = Record<string, number>;
 
@@ -1067,8 +1067,50 @@ function buildDayMarkers(visiblePoints: StrengthPoint[]): VerticalLine[] {
     lines.push({
       xAxis: point.time,
       lineStyle: {
-        color: "rgba(148,163,184,0.05)",
+        color: "rgba(148,163,184,0.06)",
         width: 1,
+        type: "solid",
+        opacity: 1,
+      },
+      label: { show: false },
+    });
+  }
+
+  return lines;
+}
+
+function getUtcWeekStartTimestamp(date: Date): number {
+  const d = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+  );
+
+  const day = d.getUTCDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+
+  d.setUTCDate(d.getUTCDate() + diffToMonday);
+  d.setUTCHours(0, 0, 0, 0);
+
+  return d.getTime();
+}
+
+function buildWeekMarkers(visiblePoints: StrengthPoint[]): VerticalLine[] {
+  if (!visiblePoints.length) return [];
+
+  const seen = new Set<number>();
+  const lines: VerticalLine[] = [];
+
+  for (const point of visiblePoints) {
+    const d = new Date(point.time);
+    const weekStartTs = getUtcWeekStartTimestamp(d);
+
+    if (seen.has(weekStartTs)) continue;
+    seen.add(weekStartTs);
+
+    lines.push({
+      xAxis: point.time,
+      lineStyle: {
+        color: "rgba(148,163,184,0.14)",
+        width: 1.4,
         type: "solid",
         opacity: 1,
       },
@@ -1096,7 +1138,8 @@ export default function CurrencyStrengthPreview({
   const [sessionAnchor, setSessionAnchor] = useState<SessionAnchor>("london");
   const [smoothing, setSmoothing] = useState<SmoothingKey>("34");
   const [newsFilter, setNewsFilter] = useState<NewsFilterKey>("off");
-  const [dayMarkers, setDayMarkers] = useState<DayMarkersKey>("off");
+  const [calendarMarkers, setCalendarMarkers] =
+    useState<CalendarMarkersKey>("off");
 
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsError, setNewsError] = useState<string | null>(null);
@@ -1279,12 +1322,10 @@ export default function CurrencyStrengthPreview({
     [newsMarkersByCurrency]
   );
 
-  const newsLines = useMemo(
-    () => buildNewsLines(visibleNewsEvents),
-    [visibleNewsEvents]
-  );
+  const newsLines = useMemo(() => buildNewsLines(visibleNewsEvents), [visibleNewsEvents]);
 
   const dayLines = useMemo(() => buildDayMarkers(visiblePoints), [visiblePoints]);
+  const weekLines = useMemo(() => buildWeekMarkers(visiblePoints), [visiblePoints]);
 
   const newsBySnappedTime = useMemo(() => {
     const map = new Map<string, NewsOverlayEvent[]>();
@@ -1325,6 +1366,11 @@ export default function CurrencyStrengthPreview({
         minute: activeTf === "M5" ? "2-digit" : undefined,
       });
     };
+
+    const showDayMarkers =
+      calendarMarkers === "day" || calendarMarkers === "both";
+    const showWeekMarkers =
+      calendarMarkers === "week" || calendarMarkers === "both";
 
     const series: Array<Record<string, unknown>> = [];
 
@@ -1369,13 +1415,15 @@ export default function CurrencyStrengthPreview({
               hasFocusedCurrency &&
               ccy === focusCurrency &&
               newsLines.length) ||
-              (dayMarkers === "on" && dayLines.length))
+              (showDayMarkers && dayLines.length) ||
+              (showWeekMarkers && weekLines.length))
               ? {
                   silent: true,
                   symbol: ["none", "none"],
                   animation: false,
                   data: [
-                    ...(dayMarkers === "on" ? dayLines : []),
+                    ...(showDayMarkers ? dayLines : []),
+                    ...(showWeekMarkers ? weekLines : []),
                     ...(newsFilter !== "off" &&
                     hasFocusedCurrency &&
                     ccy === focusCurrency
@@ -1463,13 +1511,15 @@ export default function CurrencyStrengthPreview({
             : undefined,
         markLine:
           ((newsFilter !== "off" && newsLines.length) ||
-            (dayMarkers === "on" && dayLines.length))
+            (showDayMarkers && dayLines.length) ||
+            (showWeekMarkers && weekLines.length))
             ? {
                 silent: true,
                 symbol: ["none", "none"],
                 animation: false,
                 data: [
-                  ...(dayMarkers === "on" ? dayLines : []),
+                  ...(showDayMarkers ? dayLines : []),
+                  ...(showWeekMarkers ? weekLines : []),
                   ...(newsFilter !== "off" ? newsLines : []),
                 ],
               }
@@ -1680,8 +1730,9 @@ export default function CurrencyStrengthPreview({
     newsHoverPointsByCurrency,
     newsLines,
     newsBySnappedTime,
-    dayMarkers,
+    calendarMarkers,
     dayLines,
+    weekLines,
     isMarketView,
     hasFocusedCurrency,
   ]);
@@ -1701,7 +1752,7 @@ export default function CurrencyStrengthPreview({
                 ? `Loading ${RANGE_CONFIG[rangeKey].tf} data...`
                 : `${visiblePoints.length} visible points · source ${activeTf} · rebase ${
                     rebaseMode === "range" ? "range" : SESSION_LABELS[sessionAnchor]
-                  } · smoothing ${smoothing === "off" ? "off" : smoothing} · day markers ${dayMarkers} · news ${
+                  } · smoothing ${smoothing === "off" ? "off" : smoothing} · calendar markers ${calendarMarkers} · news ${
                     newsFilter === "off"
                       ? "off"
                       : newsFilter === "high"
@@ -1803,9 +1854,15 @@ export default function CurrencyStrengthPreview({
                   onChange={(e) => setSessionAnchor(e.target.value as SessionAnchor)}
                   className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none"
                 >
-                  <option value="asia" className="bg-slate-900">Asia</option>
-                  <option value="london" className="bg-slate-900">London</option>
-                  <option value="newyork" className="bg-slate-900">New York</option>
+                  <option value="asia" className="bg-slate-900">
+                    Asia
+                  </option>
+                  <option value="london" className="bg-slate-900">
+                    London
+                  </option>
+                  <option value="newyork" className="bg-slate-900">
+                    New York
+                  </option>
                 </select>
               </label>
             )}
@@ -1819,28 +1876,54 @@ export default function CurrencyStrengthPreview({
                 onChange={(e) => setSmoothing(e.target.value as SmoothingKey)}
                 className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none"
               >
-                <option value="off" className="bg-slate-900">Off</option>
-                <option value="3" className="bg-slate-900">3</option>
-                <option value="5" className="bg-slate-900">5</option>
-                <option value="8" className="bg-slate-900">8</option>
-                <option value="13" className="bg-slate-900">13</option>
-                <option value="21" className="bg-slate-900">21</option>
-                <option value="34" className="bg-slate-900">34</option>
-                <option value="55" className="bg-slate-900">55</option>
+                <option value="off" className="bg-slate-900">
+                  Off
+                </option>
+                <option value="3" className="bg-slate-900">
+                  3
+                </option>
+                <option value="5" className="bg-slate-900">
+                  5
+                </option>
+                <option value="8" className="bg-slate-900">
+                  8
+                </option>
+                <option value="13" className="bg-slate-900">
+                  13
+                </option>
+                <option value="21" className="bg-slate-900">
+                  21
+                </option>
+                <option value="34" className="bg-slate-900">
+                  34
+                </option>
+                <option value="55" className="bg-slate-900">
+                  55
+                </option>
               </select>
             </label>
 
-            <label className="min-w-[150px]">
+            <label className="min-w-[170px]">
               <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                Day Markers
+                Calendar Markers
               </div>
               <select
-                value={dayMarkers}
-                onChange={(e) => setDayMarkers(e.target.value as DayMarkersKey)}
+                value={calendarMarkers}
+                onChange={(e) => setCalendarMarkers(e.target.value as CalendarMarkersKey)}
                 className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none"
               >
-                <option value="off" className="bg-slate-900">Off</option>
-                <option value="on" className="bg-slate-900">On</option>
+                <option value="off" className="bg-slate-900">
+                  Off
+                </option>
+                <option value="day" className="bg-slate-900">
+                  Day
+                </option>
+                <option value="week" className="bg-slate-900">
+                  Week
+                </option>
+                <option value="both" className="bg-slate-900">
+                  Day + Week
+                </option>
               </select>
             </label>
 
@@ -1853,9 +1936,15 @@ export default function CurrencyStrengthPreview({
                 onChange={(e) => setNewsFilter(e.target.value as NewsFilterKey)}
                 className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none"
               >
-                <option value="off" className="bg-slate-900">Off</option>
-                <option value="high" className="bg-slate-900">High only</option>
-                <option value="mediumHigh" className="bg-slate-900">Moderate + High</option>
+                <option value="off" className="bg-slate-900">
+                  Off
+                </option>
+                <option value="high" className="bg-slate-900">
+                  High only
+                </option>
+                <option value="mediumHigh" className="bg-slate-900">
+                  Moderate + High
+                </option>
               </select>
             </label>
           </div>

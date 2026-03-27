@@ -6,7 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 
 /* ========= CONFIG ========= */
-const MODEL = process.env.NEWS_MODEL || "gpt-5-nano";
+const MODEL = process.env.NEWS_MODEL || "gpt-5.4-mini";
 const OPENAI_HOST = process.env.OPENAI_BASE_URL || "https://api.openai.com";
 const TIMEOUT_MS = Number(process.env.NEWS_OPENAI_TIMEOUT_MS ?? 45000);
 const REQUIRE_CLICK = true;
@@ -31,7 +31,7 @@ type CalendarEventInput = {
   previous?: number | null;
   revised?: number | null;
   unit?: string | null;
-  releasedAt?: string | null; // ISO if you have it
+  releasedAt?: string | null;
 };
 
 const sha1 = (s: string) => crypto.createHash("sha1").update(s).digest("hex");
@@ -44,11 +44,11 @@ function fmt(v: number | null | undefined, u?: string | null) {
   return `${v}${u && u !== "none" ? ` ${u}` : ""}`;
 }
 
-/** SMART CACHE KEY (includes values so new results miss cache automatically) */
 function cacheKeyFor(ev: CalendarEventInput, styleTag: "raw" | "styled"): string {
   const parts = [
+    "ANALYZE_V3",
     MODEL,
-    styleTag, // <- separate caches by style mode
+    styleTag,
     (ev.indicator || "").trim(),
     (ev.country || "").trim(),
     (ev.unit || "").trim().toLowerCase(),
@@ -79,8 +79,8 @@ function makePrompt(ev?: CalendarEventInput): string {
     [
       "- Describe what this indicator measures.",
       "- Compare the actual vs forecast and state if it's better/worse for the economy and local currency.",
-      "- Give a clear near-term market read (risk-on/off) and currency bias.",
-      "- Mention typical assets/pairs affected (e.g., USD/JPY, equities, yields).",
+      "- Give a clear near-term market read and currency bias.",
+      "- Mention typical assets/pairs affected.",
       "- Keep it concise, 3–5 short bullet points. No tables or code fences.",
     ].join("\n")
   );
@@ -107,11 +107,9 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 function extractText(data: unknown): string {
   if (!isRecord(data)) return "";
 
-  // 1) unified output_text
   const ot = data["output_text"];
   if (typeof ot === "string" && ot.trim()) return ot.trim();
 
-  // 2) structured "output" array with content blocks
   const output = data["output"];
   if (Array.isArray(output)) {
     const parts: string[] = [];
@@ -127,7 +125,6 @@ function extractText(data: unknown): string {
     if (parts.length) return parts.join("\n");
   }
 
-  // 3) chat-style choices[0].message.content
   const choices = data["choices"];
   if (Array.isArray(choices) && choices.length) {
     const first = choices[0];
@@ -137,6 +134,25 @@ function extractText(data: unknown): string {
   }
 
   return "";
+}
+
+function isClearlyTruncated(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  if (/[,:;(\-–—]$/.test(t)) return true;
+
+  const sectionCount = (t.match(/^###\s+/gm) || []).length;
+  if (sectionCount > 0 && sectionCount < 4) return true;
+
+  const bulletCount = (t.match(/^[-•]\s+/gm) || []).length;
+  if (bulletCount > 0 && bulletCount < 6) return true;
+
+  const lastLine = t.split("\n").filter(Boolean).at(-1) ?? "";
+  if (lastLine.length > 0 && lastLine.length < 20 && !/[.!?]$/.test(lastLine)) {
+    return true;
+  }
+
+  return false;
 }
 
 async function callOpenAI({
@@ -165,7 +181,7 @@ async function callOpenAI({
       instructions,
       input,
       max_output_tokens: maxOutputTokens,
-      reasoning: { effort }, // keep reasoning budget light
+      reasoning: { effort },
       store: false,
     }),
     signal,
@@ -196,29 +212,23 @@ export async function POST(req: NextRequest) {
     }
 
     const force: boolean = body?.force === true;
-    const noStyle: boolean = body?.noStyle === true; // <-- Option A flag from client
+    const noStyle: boolean = body?.noStyle === true;
     const ev: CalendarEventInput | undefined = body?.calendarEvent;
-
-    // Accept free-text mode from drawer via `testPrompt`
     const testPrompt: string | undefined =
       typeof body?.testPrompt === "string" ? body.testPrompt : undefined;
 
-    // Build model input
     const input = testPrompt || makePrompt(ev);
     const instructions =
-      "You are a concise macro/markets analyst for traders. Focus on actionable interpretation, not definitions.";
+      "You are a concise but highly analytical macro and futures positioning strategist. Complete all requested sections. Prefer sharp, trader-relevant interpretation over generic explanation.";
 
-    // Style tag (for cache separation)
     const styleTag: "raw" | "styled" = noStyle ? "raw" : "styled";
 
-    // Cache key
     const key = testPrompt
-      ? `ana:${sha1(`${MODEL}|${styleTag}|${input}`)}`
+      ? `ana:${sha1(`ANALYZE_V3|${MODEL}|${styleTag}|${input}`)}`
       : ev
       ? cacheKeyFor(ev, styleTag)
-      : `ana:${sha1(`${MODEL}|${styleTag}|${input}`)}`;
+      : `ana:${sha1(`ANALYZE_V3|${MODEL}|${styleTag}|${input}`)}`;
 
-    // Serve from cache unless force is true
     if (!force && hasSupabase && supabase) {
       try {
         const { data: hit } = await supabase
@@ -226,6 +236,7 @@ export async function POST(req: NextRequest) {
           .select("result")
           .eq("id", key)
           .maybeSingle();
+
         if (hit?.result) {
           return NextResponse.json(
             { ok: true, model: MODEL, text: hit.result, cached: true },
@@ -237,49 +248,70 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // OpenAI call with timeout & retry on ceiling
     const ac = new AbortController();
     const to = setTimeout(() => ac.abort(), TIMEOUT_MS);
 
     try {
-      let raw = await callOpenAI({
-        apiKey,
-        instructions,
-        input,
-        maxOutputTokens: 800,
-        effort: "low",
-        signal: ac.signal,
-      });
-      let text = extractText(raw);
+      const attempts: Array<{
+        maxOutputTokens: number;
+        effort: "low" | "medium";
+      }> = [
+        { maxOutputTokens: 900, effort: "low" },
+        { maxOutputTokens: 1400, effort: "low" },
+        { maxOutputTokens: 1800, effort: "medium" },
+      ];
 
-      const hitCeiling =
-        raw?.status === "incomplete" &&
-        isRecord(raw?.incomplete_details) &&
-        (raw.incomplete_details["reason"] as string | undefined) === "max_output_tokens";
+      let finalText = "";
+      let finalRaw: OpenAIResponsesJson | null = null;
+      let gotComplete = false;
 
-      if (!text && hitCeiling) {
-        raw = await callOpenAI({
+      for (const attempt of attempts) {
+        const raw = await callOpenAI({
           apiKey,
           instructions,
           input,
-          maxOutputTokens: 1500,
-          effort: "low",
+          maxOutputTokens: attempt.maxOutputTokens,
+          effort: attempt.effort,
           signal: ac.signal,
         });
-        text = extractText(raw);
+
+        const text = extractText(raw);
+        const hitCeiling =
+          raw?.status === "incomplete" &&
+          isRecord(raw?.incomplete_details) &&
+          (raw.incomplete_details["reason"] as string | undefined) === "max_output_tokens";
+
+        finalRaw = raw;
+        finalText = text;
+
+        if (text && !hitCeiling && !isClearlyTruncated(text)) {
+          gotComplete = true;
+          break;
+        }
       }
 
-      if (!text) {
+      if (!finalText) {
         return NextResponse.json(
-          { ok: false, error: "No model text output", raw },
+          { ok: false, error: "No model text output", raw: finalRaw },
           { status: 200 }
         );
       }
 
-      // OPTION A: Always return RAW model text (no server-side stylizing)
-      const payloadText = text;
+      if (!gotComplete) {
+        return NextResponse.json(
+          {
+            ok: true,
+            model: MODEL,
+            text: finalText,
+            cached: false,
+            warning: "Response may be partial; not cached.",
+          },
+          { status: 200 }
+        );
+      }
 
-      // write-through cache
+      const payloadText = finalText;
+
       if (hasSupabase && supabase) {
         try {
           await supabase.from("ai_cache").upsert({

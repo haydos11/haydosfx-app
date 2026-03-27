@@ -442,10 +442,7 @@ export default function CandlesChart({
     if (preserveRangeRef.current) {
       const priorRange = preserveRangeRef.current;
       const oldVisibleBars = priorRange.to - priorRange.from;
-      const prevLengthEstimate = Math.max(
-        0,
-        candles.length - LOAD_MORE_STEP
-      );
+      const prevLengthEstimate = Math.max(0, candles.length - LOAD_MORE_STEP);
       const prependedBars = Math.max(0, candles.length - prevLengthEstimate);
 
       timeScale.setVisibleLogicalRange({
@@ -473,9 +470,7 @@ export default function CandlesChart({
               <div>
                 <h3 className="text-xl font-semibold text-white">{heading}</h3>
                 <p className="text-sm text-slate-400">
-                  {loading
-                    ? "Loading candles..."
-                    : `${candles.length} candles loaded`}
+                  {loading ? "Loading candles..." : `${candles.length} candles loaded`}
                   {loadingMore ? " · Loading more history..." : ""}
                   {lastUpdated ? ` · Updated ${lastUpdated}` : ""}
                 </p>

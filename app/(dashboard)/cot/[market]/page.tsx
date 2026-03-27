@@ -2,17 +2,19 @@
 import { Suspense } from "react";
 import MarketPageClient from "./MarketPageClient";
 
-export default function Page({
+export default async function Page({
   params,
   searchParams,
 }: {
-  params: { market: string };
-  searchParams?: { range?: string | string[] };
+  params: Promise<{ market: string }>;
+  searchParams?: Promise<{ range?: string | string[] }>;
 }) {
-  const market = params.market;
-  const rawRange = Array.isArray(searchParams?.range)
-    ? searchParams?.range[0]
-    : searchParams?.range;
+  const { market } = await params;
+  const sp = searchParams ? await searchParams : undefined;
+
+  const rawRange = Array.isArray(sp?.range)
+    ? sp?.range[0]
+    : sp?.range;
   const range = (rawRange ?? "5y").toLowerCase();
 
   return (
