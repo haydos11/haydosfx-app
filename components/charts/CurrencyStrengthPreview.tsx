@@ -267,6 +267,20 @@ function getContributionForCurrency(
   return null;
 }
 
+function getDriverLabel(pair: PairCode, focusCurrency: CurrencyCode): string | null {
+  const [base, quote] = PAIR_COMPONENTS[pair];
+
+  if (focusCurrency === base) {
+    return `${base} vs ${quote}`;
+  }
+
+  if (focusCurrency === quote) {
+    return `${quote} vs ${base}`;
+  }
+
+  return null;
+}
+
 function buildStrength(rowsByPair: Record<string, CandleApiRow[]>): StrengthPoint[] {
   const availablePairs = PAIRS.filter(
     (pair) => Array.isArray(rowsByPair[pair]) && rowsByPair[pair].length > 0
@@ -305,8 +319,9 @@ function buildStrength(rowsByPair: Record<string, CandleApiRow[]>): StrengthPoin
         const contribution = getContributionForCurrency(pair, currency, moveSeries[i]);
         if (contribution === null) continue;
 
-        const [base] = PAIR_COMPONENTS[pair];
-        const label = `${pair} (${currency === base ? "+" : "-"})`;
+        const label = getDriverLabel(pair, currency);
+        if (!label) continue;
+
         currencyDrivers[label] = contribution;
       }
 
@@ -1387,7 +1402,7 @@ export default function CurrencyStrengthPreview({
             show: true,
             formatter: "{a}",
             color: COLORS[ccy],
-            fontSize: 12,
+            fontSize: 11,
             fontWeight: 700,
           },
           labelLayout: { moveOverlap: "shiftY" },
@@ -1585,6 +1600,8 @@ export default function CurrencyStrengthPreview({
       });
     }
 
+    const gridRight = isMarketView ? 72 : hasFocusedCurrency ? 118 : 24;
+
     return {
       backgroundColor: "transparent",
       animation: true,
@@ -1594,12 +1611,12 @@ export default function CurrencyStrengthPreview({
       animationEasingUpdate: "quadraticOut",
       legend: { show: false },
       grid: {
-        left: 18,
-        right: isMarketView || hasFocusedCurrency ? 58 : 18,
-        top: 20,
-        bottom: 18,
-        containLabel: true,
-      },
+  left: 18,
+  right: gridRight,
+  top: 20,
+  bottom: 18,
+  containLabel: true,
+},
       tooltip: {
         trigger: "axis",
         triggerOn: "mousemove",
@@ -2038,7 +2055,7 @@ export default function CurrencyStrengthPreview({
               </div>
 
               <div className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
-                Drivers
+                Relative Performance
               </div>
 
               <div className="space-y-2">
@@ -2080,7 +2097,7 @@ export default function CurrencyStrengthPreview({
           <div className="mt-4 rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-xs text-slate-400">
             {isMarketView
               ? "Neutral focus keeps the market view cleaner. Pick a currency only when you want its news line and hover targets emphasised."
-              : "Use Neutral in the focus selector to clear the selected currency and reduce visual clutter."}
+              : "Relative Performance labels are shown from the perspective of the focused currency, so positive values read as strength of that currency versus the comparison currency."}
           </div>
         </div>
       </div>

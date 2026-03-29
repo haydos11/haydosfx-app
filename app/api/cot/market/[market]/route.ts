@@ -181,10 +181,10 @@ type PriceRow = {
 
 export async function GET(
   req: NextRequest,
-  context: { params: { market: string } }
+  context: { params: Promise<{ market: string }> }
 ) {
   try {
-    const market = context?.params?.market;
+    const { market } = await context.params;
 
     if (!market) {
       return NextResponse.json({ error: "Missing market param" }, { status: 400 });
@@ -570,7 +570,15 @@ export async function GET(
       };
     });
 
+    // Legacy shape kept for older currency strength chart compatibility
+    const points = dates.map((date, i) => ({
+      date,
+      netNotionalUSD: large_usd[i] ?? null,
+    }));
+
     return NextResponse.json({
+      points,
+
       market: {
         key: info.key,
         code: info.code,

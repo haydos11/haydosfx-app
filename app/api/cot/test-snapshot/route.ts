@@ -19,16 +19,16 @@ type SnapshotRow = {
   change_pct: number | null;
   net_noncommercial_pct_oi: number | null;
 
-  market_bias: string | null;
-
-  usd_directional: number | null;
-  prev_usd_directional: number | null;
+  usd_signed_exposure: number | null;
+  prev_usd_signed_exposure: number | null;
 
   position_bias: string | null;
+  position_trend: string | null;
+
   report_price: number | null;
   release_price: number | null;
-  move_pct_report_to_release: number | null;
-  price_direction: string | null;
+  reaction_move_pct: number | null;
+  reaction_direction: string | null;
   reaction_type: string | null;
 };
 
@@ -44,8 +44,8 @@ const MARKET_KEY_TO_DB_CODE: Record<string, string> = {
   chf: "6S",
   mxn: "6M",
 
-  gold: "XAU",
-  silver: "XAG",
+  gold: "GC",
+  silver: "SI",
   copper: "HG",
 
   wti: "CL",
@@ -97,9 +97,19 @@ function normalizeBias(
 }
 
 function positioningSentiment(
+  trend: string | null,
   bias: string | null,
   weeklyChange: number | null
 ): string | null {
+  if (trend) {
+    if (/increasing bullish/i.test(trend)) return "Increasing Bullish";
+    if (/less bullish/i.test(trend)) return "Less Bullish";
+    if (/increasing bearish/i.test(trend)) return "Increasing Bearish";
+    if (/less bearish/i.test(trend)) return "Less Bearish";
+    if (/flat/i.test(trend) && /bullish/i.test(bias ?? "")) return "Flat Bullish";
+    if (/flat/i.test(trend) && /bearish/i.test(bias ?? "")) return "Flat Bearish";
+  }
+
   const normalized = normalizeBias(bias);
   if (!normalized) return null;
 
@@ -120,17 +130,6 @@ function positioningSentiment(
   return "Neutral";
 }
 
-function biasFromDirectional(
-  usdDirectional: number | null,
-  netContracts: number | null
-): "bullish" | "bearish" | "neutral" | null {
-  const v = usdDirectional ?? netContracts;
-  if (v == null) return null;
-  if (v > 0) return "bullish";
-  if (v < 0) return "bearish";
-  return "neutral";
-}
-
 function toNum(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = Number(v);
@@ -142,7 +141,7 @@ export async function GET() {
     const supabase = getSupabaseAdmin();
 
     const { data, error } = await supabase
-      .from("cot_snapshot_latest_fast_mv")
+      .from("cot_snapshot_serving")
       .select(`
         market_code,
         market_name,
@@ -157,14 +156,14 @@ export async function GET() {
         weekly_change_noncommercial,
         change_pct,
         net_noncommercial_pct_oi,
-        market_bias,
-        usd_directional,
-        prev_usd_directional,
+        usd_signed_exposure,
+        prev_usd_signed_exposure,
         position_bias,
+        position_trend,
         report_price,
         release_price,
-        move_pct_report_to_release,
-        price_direction,
+        reaction_move_pct,
+        reaction_direction,
         reaction_type
       `)
       .order("market_code", { ascending: true });
@@ -174,18 +173,7 @@ export async function GET() {
     const rows = ((data ?? []) as SnapshotRow[]).map((r) => {
       const market = META_BY_DB_CODE.get(r.market_code);
       const group = market?.group ?? fallbackGroup(r.category);
-      const isFx = group === "FX";
-
-      const directionalBias = biasFromDirectional(
-        toNum(r.usd_directional),
-        toNum(r.net_noncommercial)
-      );
-
-      const finalBias = normalizeBias(
-        isFx ? (r.position_bias ?? directionalBias) : directionalBias
-      );
-
-      const marketBias = normalizeBias(r.market_bias) ?? finalBias;
+      const finalBias = normalizeBias(r.position_bias);
 
       return {
         market_code: r.market_code,
@@ -201,8 +189,12 @@ export async function GET() {
         shortPct: toNum(r.short_pct),
         prevShortPct: toNum(r.prev_short_pct),
 
-        marketBias,
-        sentiment: positioningSentiment(finalBias, toNum(r.weekly_change_noncommercial)),
+        marketBias: finalBias,
+        sentiment: positioningSentiment(
+          r.position_trend,
+          finalBias,
+          toNum(r.weekly_change_noncommercial)
+        ),
 
         netContracts: toNum(r.net_noncommercial),
         prevNet: toNum(r.prev_net_noncommercial),
@@ -210,14 +202,14 @@ export async function GET() {
         weeklyChange: toNum(r.weekly_change_noncommercial),
         netPctOi: toNum(r.net_noncommercial_pct_oi),
 
-        usdDirectional: toNum(r.usd_directional),
-        prevUsdDirectional: toNum(r.prev_usd_directional),
+        usdDirectional: toNum(r.usd_signed_exposure),
+        prevUsdDirectional: toNum(r.prev_usd_signed_exposure),
 
         bias: finalBias,
         reportPrice: toNum(r.report_price),
         releasePrice: toNum(r.release_price),
-        movePct: toNum(r.move_pct_report_to_release),
-        priceDirection: r.price_direction,
+        movePct: toNum(r.reaction_move_pct),
+        priceDirection: r.reaction_direction,
         reaction: r.reaction_type,
       };
     });

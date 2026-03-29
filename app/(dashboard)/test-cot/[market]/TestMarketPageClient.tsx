@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Info } from "lucide-react";
+import { ArrowLeft, Info } from "lucide-react";
 import CotCharts from "@/app/(dashboard)/cot/components/CotCharts";
 import AnalyzeCotButton from "./AnalyzeCotButton";
 
@@ -714,6 +715,16 @@ export default function TestMarketPageClient({
 
   return (
     <div className="space-y-6">
+      <div>
+        <Link
+          href="/test-cot"
+          className="inline-flex items-center gap-2 text-sm text-slate-400 transition-colors hover:text-white"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          <span>Back to Test COT</span>
+        </Link>
+      </div>
+
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -768,7 +779,6 @@ export default function TestMarketPageClient({
                   {n}
                 </button>
               ))}
-
             </div>
 
             {analysisInput ? <AnalyzeCotButton input={analysisInput} /> : null}

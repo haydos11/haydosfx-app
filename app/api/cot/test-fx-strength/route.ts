@@ -9,6 +9,7 @@ const LABEL_BY_CODE: Record<string, string> = {
   "6B": "GBP",
   "6J": "JPY",
   "6N": "NZD",
+  "6M": "MXN",
 };
 
 const FX_CODES = Object.keys(LABEL_BY_CODE);
@@ -38,7 +39,7 @@ function cutoffFor(range: string): string | null {
 type Row = {
   report_date: string;
   market_code: string;
-  net_noncommercial_usd: number | null;
+  usd_signed_exposure: number | null;
 };
 
 export async function GET(req: NextRequest) {
@@ -48,11 +49,11 @@ export async function GET(req: NextRequest) {
     const startDate = cutoffFor(range);
 
     let query = supabase
-      .from("cot_fx_usd_notional")
+      .from("cot_market_history_serving")
       .select(`
         report_date,
         market_code,
-        net_noncommercial_usd
+        usd_signed_exposure
       `)
       .in("market_code", FX_CODES)
       .order("report_date", { ascending: true });
@@ -75,7 +76,7 @@ export async function GET(req: NextRequest) {
       }
 
       const label = LABEL_BY_CODE[row.market_code] ?? row.market_code;
-      byDate.get(row.report_date)![label] = row.net_noncommercial_usd;
+      byDate.get(row.report_date)![label] = row.usd_signed_exposure;
     }
 
     const dates = Array.from(byDate.keys()).sort();
