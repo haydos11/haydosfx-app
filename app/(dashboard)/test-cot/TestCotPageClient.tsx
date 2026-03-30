@@ -72,6 +72,11 @@ function fmtPx(v: number | null | undefined) {
   return v.toFixed(5);
 }
 
+function fmtIndex(v: number | null | undefined) {
+  if (v == null) return "—";
+  return v.toFixed(2);
+}
+
 function fmtUsdDirectional(v: number | null | undefined) {
   if (v == null) return "—";
   const sign = v < 0 ? "-" : "";
@@ -130,7 +135,18 @@ function reactionTone(v: string | null | undefined): "neutral" | "up" | "warn" {
   return "neutral";
 }
 
-function TooltipInfo({ text }: { text: string }) {
+function TooltipInfo({
+  text,
+  align = "center",
+}: {
+  text: string;
+  align?: "center" | "right";
+}) {
+  const positionClass =
+    align === "right"
+      ? "right-0 left-auto translate-x-0"
+      : "left-1/2 -translate-x-1/2";
+
   return (
     <span className="group relative inline-flex items-center">
       <button
@@ -140,7 +156,12 @@ function TooltipInfo({ text }: { text: string }) {
       >
         <Info className="h-3.5 w-3.5" />
       </button>
-      <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-72 -translate-x-1/2 rounded-xl border border-white/10 bg-[#111111] px-3 py-2 text-xs leading-5 text-slate-300 shadow-2xl group-hover:block">
+      <span
+        className={[
+          "pointer-events-none absolute top-full z-20 mt-2 hidden w-80 rounded-xl border border-white/10 bg-[#111111] px-3 py-2 text-xs leading-5 text-slate-300 shadow-2xl group-hover:block",
+          positionClass,
+        ].join(" ")}
+      >
         {text}
       </span>
     </span>
@@ -148,7 +169,11 @@ function TooltipInfo({ text }: { text: string }) {
 }
 
 function reactionHelpText() {
-  return "Confirmation means price moved in the same direction as positioning into release. Fade means price moved against the positioning read into release, suggesting divergence, squeeze, or distribution.";
+  return "For the snapshot page, the reaction pill is shift-aware. That means it compares price direction into release against the positioning read itself: Increasing Bullish expects price up, Less Bullish expects price down, Increasing Bearish expects price down, and Less Bearish expects price up.";
+}
+
+function pricePathHelpText() {
+  return "For FX markets, the path is shown as a simple indexed display where report = 100.00 and release is scaled from that. For non-FX markets, the stored market price is shown directly.";
 }
 
 function sectorLabel(group: TestSnapshotRow["group"]) {
@@ -157,6 +182,69 @@ function sectorLabel(group: TestSnapshotRow["group"]) {
   if (group === "METALS") return "Metals";
   if (group === "AGRI") return "Agri";
   return group;
+}
+
+function isFxRow(row: TestSnapshotRow) {
+  return row.group === "FX";
+}
+
+function getIndexedPath(row: TestSnapshotRow) {
+  if (!isFxRow(row)) {
+    return {
+      report: row.reportPrice,
+      release: row.releasePrice,
+      isIndexed: false,
+    };
+  }
+
+  if (row.reportPrice == null || row.releasePrice == null || row.reportPrice === 0) {
+    return {
+      report: null,
+      release: null,
+      isIndexed: true,
+    };
+  }
+
+  return {
+    report: 100,
+    release: (row.releasePrice / row.reportPrice) * 100,
+    isIndexed: true,
+  };
+}
+
+function expectedDirectionFromSentiment(
+  sentiment: string | null | undefined,
+  bias: string | null | undefined
+): "up" | "down" | null {
+  const s = (sentiment ?? "").toLowerCase();
+  const b = (bias ?? "").toLowerCase();
+
+  if (s.includes("increasing bullish")) return "up";
+  if (s.includes("less bullish")) return "down";
+  if (s.includes("increasing bearish")) return "down";
+  if (s.includes("less bearish")) return "up";
+
+  if (s.includes("flat bullish")) return "up";
+  if (s.includes("flat bearish")) return "down";
+
+  if (b === "bullish") return "up";
+  if (b === "bearish") return "down";
+
+  return null;
+}
+
+function deriveShiftAwareReaction(row: TestSnapshotRow): "confirmation" | "fade" | null {
+  const expected = expectedDirectionFromSentiment(row.sentiment, row.marketBias ?? row.bias);
+  const actual = row.priceDirection;
+
+  if (!expected || !actual || actual === "flat") return null;
+  return expected === actual ? "confirmation" : "fade";
+}
+
+function reactionLabel(row: TestSnapshotRow) {
+  const derived = deriveShiftAwareReaction(row);
+  if (!derived) return "—";
+  return derived === "confirmation" ? "Confirmation" : "Fade";
 }
 
 export default function TestCotPageClient() {
@@ -213,8 +301,10 @@ export default function TestCotPageClient() {
       0
     );
 
-    const confirmations = fxRows.filter((r) => r.reaction === "confirmation").length;
-    const fades = fxRows.filter((r) => r.reaction === "fade").length;
+    const confirmations = fxRows.filter(
+      (r) => deriveShiftAwareReaction(r) === "confirmation"
+    ).length;
+    const fades = fxRows.filter((r) => deriveShiftAwareReaction(r) === "fade").length;
 
     return {
       totalMarkets: rows.length,
@@ -347,10 +437,10 @@ export default function TestCotPageClient() {
                 <th className="px-4 py-3 text-left font-medium">Change</th>
                 <th className="px-4 py-3 text-left font-medium">USD Notional</th>
                 <th className="px-4 py-3 text-left font-medium">Prev USD Notional</th>
-                <th className="px-4 py-3 text-left font-medium min-w-[220px]">
+                <th className="px-4 py-3 text-left font-medium min-w-[260px]">
                   <div className="flex items-center gap-2">
                     <span>Price Move</span>
-                    <TooltipInfo text={reactionHelpText()} />
+                    <TooltipInfo text={reactionHelpText()} align="right" />
                   </div>
                 </th>
               </tr>
@@ -358,7 +448,9 @@ export default function TestCotPageClient() {
 
             <tbody>
               {filtered.map((r) => {
-                const hasFxReaction =
+                const path = getIndexedPath(r);
+                const shiftReaction = deriveShiftAwareReaction(r);
+                const hasReaction =
                   r.reportPrice != null || r.releasePrice != null || r.movePct != null;
 
                 return (
@@ -437,27 +529,30 @@ export default function TestCotPageClient() {
                     </td>
 
                     <td className="px-4 py-2.5">
-                      {hasFxReaction ? (
+                      {hasReaction ? (
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="tabular-nums text-slate-100">
                               {fmtPctSigned(r.movePct)}
                             </span>
-                            <Badge tone={reactionTone(r.reaction)}>
-                              {r.reaction
-                                ? r.reaction.charAt(0).toUpperCase() + r.reaction.slice(1)
-                                : "—"}
+                            <Badge tone={reactionTone(shiftReaction)}>
+                              {reactionLabel(r)}
                             </Badge>
                           </div>
                           <div className="mt-0.5 text-xs text-slate-400">
-                            {fmtPx(r.reportPrice)} → {fmtPx(r.releasePrice)}
+                            Report → Release
+                          </div>
+                          <div className="mt-0.5 text-xs text-slate-400">
+                            {path.isIndexed
+                              ? `${fmtIndex(path.report)} → ${fmtIndex(path.release)}`
+                              : `${fmtPx(path.report)} → ${fmtPx(path.release)}`}
                           </div>
                         </div>
                       ) : (
                         <div className="min-w-0">
                           <div className="tabular-nums text-slate-100">—</div>
                           <div className="mt-0.5 text-xs text-slate-400">
-                            Report: {fmtPx(r.reportPrice)}
+                            Report: {isFxRow(r) ? fmtIndex(100) : fmtPx(r.reportPrice)}
                           </div>
                         </div>
                       )}

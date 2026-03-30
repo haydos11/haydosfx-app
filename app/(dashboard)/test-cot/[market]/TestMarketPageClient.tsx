@@ -9,26 +9,37 @@ import AnalyzeCotButton from "./AnalyzeCotButton";
 
 type RecentRow = {
   date: string;
+  release_date?: string | null;
+  next_report_date?: string | null;
+
   open_interest: number | null;
   large_spec_net: number;
   large_spec_long?: number | null;
   large_spec_short?: number | null;
   small_traders_net: number;
   commercials_net: number;
+
   report_price?: number | null;
   release_price?: number | null;
+  next_report_price?: number | null;
 
   indexed_report_price?: number | null;
   indexed_release_price?: number | null;
 
   bias?: string | null;
   positioning?: string | null;
+
   move_pct_report_to_release?: number | null;
+  move_pct_release_to_next_report?: number | null;
+  move_pct_report_to_next_report?: number | null;
+
   price_direction?: string | null;
   reaction_type?: string | null;
+
   large_spec_net_usd?: number | null;
   small_traders_net_usd?: number | null;
   commercials_net_usd?: number | null;
+
   d_large?: number;
   d_large_long?: number;
   d_large_short?: number;
@@ -101,6 +112,11 @@ function fmtPctUnsigned(v: number | null | undefined) {
 function fmtPx(v: number | null | undefined) {
   if (v == null) return "—";
   return v.toFixed(5);
+}
+
+function fmtIndex(v: number | null | undefined) {
+  if (v == null) return "—";
+  return v.toFixed(2);
 }
 
 function fmtUsd(v: number | null | undefined) {
@@ -188,26 +204,22 @@ function positioningShiftLabel(
 
 function reactionHelpText(isFx: boolean) {
   if (isFx) {
-    return "For FX markets, the move is calculated from the indexed currency view rather than the raw pair quote. Confirmation means the indexed currency moved in the same direction as positioning into release. Fade means it moved against the positioning read.";
+    return "For FX markets, Report → Release uses the indexed underlying currency view. Confirmation means the indexed currency moved in the same direction as the positioning shift into release. Fade means it moved against it.";
   }
 
-  return "Confirmation means price moved in the same direction as positioning into release. Fade means price moved against the positioning read into release, suggesting divergence, squeeze, or distribution.";
+  return "Confirmation means price moved in the same direction as the positioning shift into release. Fade means price moved against it.";
 }
 
 function reportPriceHelpText(isFx: boolean) {
   if (isFx) {
-    return "For FX markets, this is a basket-based indexed currency view rather than the raw pair quote. It reflects the underlying currency’s broader strength across multiple FX pairs and is used for report-to-release reaction analysis. USD notionals are calculated separately from contract pricing.";
+    return "For FX markets, displayed prices are shown as a rebased indexed view for readability. USD notional is calculated separately from real pair pricing.";
   }
 
-  return "For non-FX markets, this is the stored report-date market price used for the positioning and reaction view.";
+  return "For non-FX markets, this is the stored market price used for reaction analysis.";
 }
 
 function grossPositionHelpText() {
   return "Gross positioning is large spec longs plus large spec shorts. It shows depth of participation even when net positioning looks small.";
-}
-
-function netPctGrossHelpText() {
-  return "Net % Gross = net contracts divided by gross contracts. It shows how directional positioning is relative to the total depth of large spec participation.";
 }
 
 function rangeHelpText(label: string) {
@@ -222,48 +234,64 @@ function getDisplayReleasePrice(row: RecentRow, isFx: boolean) {
   return isFx ? (row.indexed_release_price ?? row.release_price) : row.release_price;
 }
 
-function buildRead(latest: RecentRow | null, code: string, isFx: boolean) {
+function rebaseFxDisplay(
+  value: number | null | undefined,
+  base: number | null | undefined
+) {
+  if (value == null || base == null || base === 0) return null;
+  return (value / base) * 100;
+}
+
+function expectedDirectionFromShift(
+  positioning: string | null | undefined,
+  bias: string | null | undefined
+): "up" | "down" | null {
+  const p = (positioning ?? "").toLowerCase();
+  const b = (bias ?? "").toLowerCase();
+
+  if (p.includes("increasing bullish")) return "up";
+  if (p.includes("less bullish")) return "down";
+  if (p.includes("increasing bearish")) return "down";
+  if (p.includes("less bearish")) return "up";
+  if (p.includes("flat bullish")) return "up";
+  if (p.includes("flat bearish")) return "down";
+
+  if (b === "bullish") return "up";
+  if (b === "bearish") return "down";
+  return null;
+}
+
+function deriveShiftAwareReaction(row: RecentRow): "confirmation" | "fade" | null {
+  const expected = expectedDirectionFromShift(row.positioning, row.bias);
+  const actual = row.price_direction;
+
+  if (!expected || !actual || actual === "flat") return null;
+  return expected === actual ? "confirmation" : "fade";
+}
+
+function reactionDisplayLabel(row: RecentRow) {
+  const derived = deriveShiftAwareReaction(row);
+  if (!derived) return "—";
+  return derived === "confirmation" ? "Confirmation" : "Fade";
+}
+
+function buildRead(latest: RecentRow | null, code: string) {
   if (!latest || !latest.bias) return null;
 
   const shift = latest.positioning ?? positioningShiftLabel(latest.bias, latest.d_large);
-  const displayReportPrice = getDisplayReportPrice(latest, isFx);
+  const shiftReaction = deriveShiftAwareReaction(latest);
+  const move = latest.move_pct_report_to_release;
+  const moveTxt = move == null ? "—" : `${move > 0 ? "+" : ""}${move.toFixed(2)}%`;
 
-  if (latest.reaction_type) {
-    const move = latest.move_pct_report_to_release;
-    const moveTxt = move == null ? "—" : `${move > 0 ? "+" : ""}${move.toFixed(2)}%`;
-
-    if (latest.reaction_type === "confirmation") {
-      return `${code} positioning remains ${latest.bias} (${shift}) and price confirmed into release (${moveTxt}).`;
-    }
-
-    if (latest.reaction_type === "fade") {
-      return `${code} positioning remains ${latest.bias} (${shift}) but price faded into release (${moveTxt}), suggesting divergence or squeeze.`;
-    }
+  if (shiftReaction === "confirmation") {
+    return `${code} positioning remains ${latest.bias} (${shift}) and price confirmed the positioning shift into release (${moveTxt}).`;
   }
 
-  const reportPriceTxt = displayReportPrice == null ? "—" : fmtPx(displayReportPrice);
-  const usdTxt = fmtUsd(latest.large_spec_net_usd);
+  if (shiftReaction === "fade") {
+    return `${code} positioning remains ${latest.bias} (${shift}) but price faded the positioning shift into release (${moveTxt}).`;
+  }
 
-  return `${code} positioning remains ${latest.bias} (${shift}). Latest report price ${reportPriceTxt} with large spec USD notional at ${usdTxt}.`;
-}
-
-function CellStack({
-  top,
-  bottom,
-  topClass = "text-slate-100",
-  bottomClass = "text-slate-400",
-}: {
-  top: React.ReactNode;
-  bottom: React.ReactNode;
-  topClass?: string;
-  bottomClass?: string;
-}) {
-  return (
-    <div className="min-w-0">
-      <div className={`tabular-nums ${topClass}`}>{top}</div>
-      <div className={`mt-0.5 text-xs ${bottomClass}`}>{bottom}</div>
-    </div>
-  );
+  return `${code} positioning remains ${latest.bias} (${shift}). Report → Release move: ${moveTxt}.`;
 }
 
 function DeltaLine({
@@ -310,7 +338,18 @@ function InlineValueWithDelta({
   );
 }
 
-function TooltipInfo({ text }: { text: string }) {
+function TooltipInfo({
+  text,
+  align = "center",
+}: {
+  text: string;
+  align?: "center" | "right";
+}) {
+  const positionClass =
+    align === "right"
+      ? "right-0 left-auto translate-x-0"
+      : "left-1/2 -translate-x-1/2";
+
   return (
     <span className="group relative inline-flex items-center">
       <button
@@ -320,7 +359,12 @@ function TooltipInfo({ text }: { text: string }) {
       >
         <Info className="h-3.5 w-3.5" />
       </button>
-      <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-80 -translate-x-1/2 rounded-xl border border-white/10 bg-[#111111] px-3 py-2 text-xs leading-5 text-slate-300 shadow-2xl group-hover:block">
+      <span
+        className={[
+          "pointer-events-none absolute top-full z-20 mt-2 hidden w-80 rounded-xl border border-white/10 bg-[#111111] px-3 py-2 text-xs leading-5 text-slate-300 shadow-2xl group-hover:block",
+          positionClass,
+        ].join(" ")}
+      >
         {text}
       </span>
     </span>
@@ -333,21 +377,12 @@ function PositioningCell({ row }: { row: RecentRow }) {
   const shiftTone = toneFromPositioningShift(row.bias, row.d_large);
 
   return (
-    <div className="flex items-center gap-2 whitespace-nowrap">
-      <span
-        className={[
-          "text-sm font-medium",
-          row.bias === "bullish"
-            ? "text-emerald-300"
-            : row.bias === "bearish"
-            ? "text-rose-300"
-            : "text-slate-300",
-        ].join(" ")}
-      >
+    <div className="flex max-w-[120px] flex-wrap gap-1.5 leading-tight">
+      <Badge tone={toneFromBias(row.bias)}>
         {row.bias
           ? row.bias.charAt(0).toUpperCase() + row.bias.slice(1)
           : "—"}
-      </span>
+      </Badge>
 
       <Badge tone={shiftTone}>{shiftLabel}</Badge>
     </div>
@@ -452,11 +487,30 @@ export default function TestMarketPageClient({
     router.replace(`${pathname}?${sp.toString()}`);
   }
 
-  const analysisInput = useMemo(() => {
-    if (!data || !data.recent?.length) return null;
+  const latest = data?.recent?.[0] ?? null;
+  const isFx = Boolean(data?.market.isFx);
 
-    const latest = data.recent[0];
-    const isFx = Boolean(data.market.isFx);
+  const fxDisplayBase = useMemo(() => {
+    if (!isFx || !data?.recent?.length) return null;
+    const oldestVisible = data.recent[data.recent.length - 1];
+    return getDisplayReportPrice(oldestVisible, true);
+  }, [data, isFx]);
+
+  const latestDisplayReportPrice = latest ? getDisplayReportPrice(latest, isFx) : null;
+  const latestDisplayReleasePrice = latest ? getDisplayReleasePrice(latest, isFx) : null;
+
+  const latestDisplayReportPriceRebased =
+    isFx && latestDisplayReportPrice != null
+      ? rebaseFxDisplay(latestDisplayReportPrice, fxDisplayBase)
+      : latestDisplayReportPrice;
+
+  const latestDisplayReleasePriceRebased =
+    isFx && latestDisplayReleasePrice != null
+      ? rebaseFxDisplay(latestDisplayReleasePrice, fxDisplayBase)
+      : latestDisplayReleasePrice;
+
+  const analysisInput = useMemo(() => {
+    if (!data || !data.recent?.length || !latest) return null;
 
     const latestLong = latest.large_spec_long ?? null;
     const latestShort = latest.large_spec_short ?? null;
@@ -477,9 +531,6 @@ export default function TestMarketPageClient({
       latest.large_spec_net != null
         ? (latest.large_spec_net / grossContracts) * 100
         : null;
-
-    const latestDisplayReportPrice = getDisplayReportPrice(latest, isFx);
-    const latestDisplayReleasePrice = getDisplayReleasePrice(latest, isFx);
 
     const netSeries = data.large.filter((v) => Number.isFinite(v));
     const usdSeries = (data.large_usd ?? []).filter(
@@ -584,7 +635,7 @@ export default function TestMarketPageClient({
       indexedReleasePrice: latestDisplayReleasePrice ?? null,
       movePct: latest.move_pct_report_to_release ?? null,
       priceDirection: latest.price_direction ?? null,
-      reactionType: latest.reaction_type ?? null,
+      reactionType: deriveShiftAwareReaction(latest),
 
       net52wHigh,
       net52wLow,
@@ -598,19 +649,14 @@ export default function TestMarketPageClient({
       oiVsAvgPct,
 
       notes:
-        "Derived from DB-backed COT market page with speculative positioning depth, 52-week context, USD notionals, and report-to-release price reaction. For FX, indexed currency prices should be prioritised over raw pair prices when interpreting confirmation/fade and broader underlying currency strength.",
+        "Derived from DB-backed COT market page with speculative positioning depth, 52-week context, USD notionals, and report-to-release reaction.",
     };
-  }, [data, range]);
+  }, [data, latest, latestDisplayReportPrice, latestDisplayReleasePrice, range, isFx]);
 
-  const latest = data?.recent?.[0] ?? null;
-  const isFx = Boolean(data?.market.isFx);
-  const narrative = buildRead(latest, data?.market.code ?? "", isFx);
+  const narrative = buildRead(latest, data?.market.code ?? "");
   const latestShift = latest
     ? latest.positioning ?? positioningShiftLabel(latest.bias, latest.d_large)
     : "Neutral";
-
-  const latestDisplayReportPrice = latest ? getDisplayReportPrice(latest, isFx) : null;
-  const latestDisplayReleasePrice = latest ? getDisplayReleasePrice(latest, isFx) : null;
 
   const derivedStats = useMemo(() => {
     if (!data || !latest) return null;
@@ -712,6 +758,8 @@ export default function TestMarketPageClient({
     recent: data.recent,
     updated: data.updated,
   };
+
+  const latestReaction = latest ? deriveShiftAwareReaction(latest) : null;
 
   return (
     <div className="space-y-6">
@@ -834,9 +882,17 @@ export default function TestMarketPageClient({
 
           <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
             <StatCard
-              label="Report price"
-              value={fmtPx(latestDisplayReportPrice)}
-              subvalue={`Release: ${fmtPx(latestDisplayReleasePrice)}`}
+              label={isFx ? "Indexed price" : "Report price"}
+              value={
+                isFx
+                  ? fmtIndex(latestDisplayReportPriceRebased)
+                  : fmtPx(latestDisplayReportPrice)
+              }
+              subvalue={
+                isFx
+                  ? `Release: ${fmtIndex(latestDisplayReleasePriceRebased)}`
+                  : `Release: ${fmtPx(latestDisplayReleasePrice)}`
+              }
               help={reportPriceHelpText(isFx)}
             />
 
@@ -870,11 +926,11 @@ export default function TestMarketPageClient({
               label="Price response"
               value={
                 <div className="flex items-center gap-2">
-                  <Badge tone={toneFromReaction(latest.reaction_type)}>
-                    {latest.reaction_type ?? "—"}
+                  <Badge tone={toneFromReaction(latestReaction)}>
+                    {latest ? reactionDisplayLabel(latest) : "—"}
                   </Badge>
                   <span className="text-sm text-slate-300">
-                    {fmtPct(latest.move_pct_report_to_release)}
+                    {fmtPct(latest?.move_pct_report_to_release)}
                   </span>
                 </div>
               }
@@ -904,8 +960,18 @@ export default function TestMarketPageClient({
               {narrative ?? "No current positioning summary available."}
             </div>
             <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">
-              <span>Report: {fmtPx(latestDisplayReportPrice)}</span>
-              <span>Release: {fmtPx(latestDisplayReleasePrice)}</span>
+              <span>
+                Report:{" "}
+                {isFx
+                  ? fmtIndex(latestDisplayReportPriceRebased)
+                  : fmtPx(latestDisplayReportPrice)}
+              </span>
+              <span>
+                Release:{" "}
+                {isFx
+                  ? fmtIndex(latestDisplayReleasePriceRebased)
+                  : fmtPx(latestDisplayReleasePrice)}
+              </span>
               <span>Direction: {latest.price_direction ?? "—"}</span>
               <span>Gross: {fmtNum(derivedStats.grossContracts)}</span>
               <span>Net % Gross: {fmtPctUnsigned(derivedStats.netPctGross)}</span>
@@ -926,55 +992,58 @@ export default function TestMarketPageClient({
           <table className="min-w-full text-sm">
             <thead>
               <tr className="bg-white/[0.02] text-slate-400">
-                <th className="px-4 py-3 text-left font-medium">Date</th>
-                <th className="px-4 py-3 text-left font-medium min-w-[220px]">
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Date</th>
+                <th className="px-4 py-3 text-left font-medium min-w-[110px]">
                   Positioning
                 </th>
-                <th className="px-4 py-3 text-left font-medium">Open Interest</th>
-                <th className="px-4 py-3 text-left font-medium">Small Traders Net</th>
-                <th className="px-4 py-3 text-left font-medium">Commercials Net</th>
-                <th className="px-4 py-3 text-left font-medium">Large Specs Net</th>
-                <th className="px-4 py-3 text-left font-medium">Large Specs Long</th>
-                <th className="px-4 py-3 text-left font-medium">Large Specs Short</th>
-                <th className="px-4 py-3 text-left font-medium">
-                  <div className="flex items-center gap-2">
-                    <span>Report Price</span>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">OI</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Small</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Comm</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Large</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Long</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Short</th>
+                <th className="px-4 py-3 text-left font-medium min-w-[220px]">
+                  <div className="flex items-center gap-2 whitespace-nowrap">
+                    <span>Price Path</span>
                     <TooltipInfo text={reportPriceHelpText(isFx)} />
                   </div>
                 </th>
                 <th className="px-4 py-3 text-left font-medium min-w-[220px]">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 whitespace-nowrap">
                     <span>Price Move</span>
-                    <TooltipInfo text={reactionHelpText(isFx)} />
+                    <TooltipInfo text={reactionHelpText(isFx)} align="right" />
                   </div>
                 </th>
-                <th className="px-4 py-3 text-left font-medium">USD Notional</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">USD</th>
               </tr>
             </thead>
 
             <tbody>
               {data.recent.map((r) => {
-                const hasReaction =
-                  r.move_pct_report_to_release != null ||
-                  r.report_price != null ||
-                  r.release_price != null ||
-                  r.reaction_type != null;
+                const rawReport = getDisplayReportPrice(r, isFx);
+                const rawRelease = getDisplayReleasePrice(r, isFx);
 
-                const displayReportPrice = getDisplayReportPrice(r, isFx);
-                const displayReleasePrice = getDisplayReleasePrice(r, isFx);
+                const displayReport = isFx
+                  ? rebaseFxDisplay(rawReport, fxDisplayBase)
+                  : rawReport;
+                const displayRelease = isFx
+                  ? rebaseFxDisplay(rawRelease, fxDisplayBase)
+                  : rawRelease;
+
+                const shiftReaction = deriveShiftAwareReaction(r);
 
                 return (
                   <tr
                     key={r.date}
                     className="border-t border-white/5 align-top hover:bg-white/[0.03]"
                   >
-                    <td className="px-4 py-2.5 text-slate-200">{r.date}</td>
+                    <td className="px-4 py-3 text-slate-200 whitespace-nowrap">{r.date}</td>
 
-                    <td className="px-4 py-2.5">
+                    <td className="px-4 py-3 align-top">
                       <PositioningCell row={r} />
                     </td>
 
-                    <td className="px-4 py-2.5">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <InlineValueWithDelta
                         value={r.open_interest}
                         delta={r.d_oi}
@@ -983,7 +1052,7 @@ export default function TestMarketPageClient({
                       />
                     </td>
 
-                    <td className="px-4 py-2.5">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <InlineValueWithDelta
                         value={r.small_traders_net}
                         delta={r.d_small}
@@ -992,7 +1061,7 @@ export default function TestMarketPageClient({
                       />
                     </td>
 
-                    <td className="px-4 py-2.5">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <InlineValueWithDelta
                         value={r.commercials_net}
                         delta={r.d_comm}
@@ -1001,7 +1070,7 @@ export default function TestMarketPageClient({
                       />
                     </td>
 
-                    <td className="px-4 py-2.5">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <InlineValueWithDelta
                         value={r.large_spec_net}
                         delta={r.d_large}
@@ -1010,7 +1079,7 @@ export default function TestMarketPageClient({
                       />
                     </td>
 
-                    <td className="px-4 py-2.5">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <InlineValueWithDelta
                         value={r.large_spec_long}
                         delta={r.d_large_long}
@@ -1019,7 +1088,7 @@ export default function TestMarketPageClient({
                       />
                     </td>
 
-                    <td className="px-4 py-2.5">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <InlineValueWithDelta
                         value={r.large_spec_short}
                         delta={r.d_large_short}
@@ -1028,47 +1097,34 @@ export default function TestMarketPageClient({
                       />
                     </td>
 
-                    <td className="px-4 py-2.5">
-                      <CellStack
-                        top={fmtPx(displayReportPrice)}
-                        bottom={
-                          <span className="text-xs text-slate-400">
-                            Release: {fmtPx(displayReleasePrice)}
+                    <td className="px-4 py-3">
+                      <div className="space-y-1 whitespace-nowrap">
+                        <div className="text-xs text-slate-500">Report → Release</div>
+                        <div className="tabular-nums text-slate-100">
+                          {isFx ? fmtIndex(displayReport) : fmtPx(displayReport)} →{" "}
+                          {isFx ? fmtIndex(displayRelease) : fmtPx(displayRelease)}
+                        </div>
+                      </div>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 whitespace-nowrap">
+                          <Badge tone={toneFromReaction(shiftReaction)}>
+                            {reactionDisplayLabel(r)}
+                          </Badge>
+                        </div>
+
+                        <div className="text-xs text-slate-400 whitespace-nowrap">
+                          Report → Release:{" "}
+                          <span className="tabular-nums text-slate-200">
+                            {fmtPct(r.move_pct_report_to_release)}
                           </span>
-                        }
-                        topClass="text-slate-100"
-                        bottomClass="text-xs"
-                      />
+                        </div>
+                      </div>
                     </td>
 
-                    <td className="px-4 py-2.5">
-                      {hasReaction ? (
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="tabular-nums text-slate-100">
-                              {fmtPct(r.move_pct_report_to_release)}
-                            </span>
-                            <Badge tone={toneFromReaction(r.reaction_type)}>
-                              {r.reaction_type
-                                ? r.reaction_type.charAt(0).toUpperCase() + r.reaction_type.slice(1)
-                                : "—"}
-                            </Badge>
-                          </div>
-                          <div className="mt-0.5 text-xs text-slate-400">
-                            {fmtPx(displayReportPrice)} → {fmtPx(displayReleasePrice)}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="min-w-0">
-                          <div className="tabular-nums text-slate-100">—</div>
-                          <div className="mt-0.5 text-xs text-slate-400">
-                            No release reaction yet
-                          </div>
-                        </div>
-                      )}
-                    </td>
-
-                    <td className="px-4 py-2.5">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <InlineValueWithDelta
                         value={r.large_spec_net_usd}
                         delta={r.d_large_usd}

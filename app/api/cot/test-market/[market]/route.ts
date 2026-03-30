@@ -83,10 +83,16 @@ type ServingRow = {
 
   report_date: string;
   release_date: string | null;
+  next_report_date: string | null;
 
   report_price: number | null;
   release_price: number | null;
+  next_report_price: number | null;
+
   reaction_move_pct: number | null;
+  release_to_next_report_move_pct: number | null;
+  report_to_next_report_move_pct: number | null;
+
   reaction_direction: string | null;
   reaction_type: string | null;
 
@@ -244,12 +250,15 @@ export async function GET(
       positioning.push(row.position_trend);
     }
 
-    const recentBase = rows
+    const recent = rows
       .slice()
       .reverse()
       .slice(0, recentCount)
       .map((row) => ({
         date: isoDate(row.report_date),
+        release_date: row.release_date ? isoDate(row.release_date) : null,
+        next_report_date: row.next_report_date ? isoDate(row.next_report_date) : null,
+
         open_interest: toNum(row.oi_total),
 
         large_spec_net: toNum(row.net_noncommercial) ?? 0,
@@ -261,55 +270,32 @@ export async function GET(
 
         report_price: toNum(row.report_price),
         release_price: toNum(row.release_price),
+        next_report_price: toNum(row.next_report_price),
+
         indexed_report_price: toNum(row.report_price),
         indexed_release_price: toNum(row.release_price),
 
         bias: row.position_bias,
+        positioning: row.position_trend,
+
         move_pct_report_to_release: toNum(row.reaction_move_pct),
+        move_pct_release_to_next_report: toNum(row.release_to_next_report_move_pct),
+        move_pct_report_to_next_report: toNum(row.report_to_next_report_move_pct),
+
         price_direction: row.reaction_direction,
         reaction_type: row.reaction_type,
 
         large_spec_net_usd: toNum(row.usd_signed_exposure),
         small_traders_net_usd: null,
         commercials_net_usd: null,
-        raw_positioning: row.position_trend,
+
+        d_large: toNum(row.d_net_noncommercial),
+        d_large_long: toNum(row.d_long_noncommercial),
+        d_large_short: toNum(row.d_short_noncommercial),
+        d_small: toNum(row.d_net_nonreportable),
+        d_comm: toNum(row.d_net_commercial),
+        d_oi: toNum(row.d_oi_total),
       }));
-
-    const recent = recentBase.map((r, i) => {
-      const next = recentBase[i + 1];
-
-      return {
-        ...r,
-        positioning: r.raw_positioning,
-        d_large: next ? r.large_spec_net - next.large_spec_net : undefined,
-        d_large_long:
-          next &&
-          r.large_spec_long != null &&
-          next.large_spec_long != null
-            ? r.large_spec_long - next.large_spec_long
-            : undefined,
-        d_large_short:
-          next &&
-          r.large_spec_short != null &&
-          next.large_spec_short != null
-            ? r.large_spec_short - next.large_spec_short
-            : undefined,
-        d_small: next ? r.small_traders_net - next.small_traders_net : undefined,
-        d_comm: next ? r.commercials_net - next.commercials_net : undefined,
-        d_oi:
-          next && r.open_interest != null && next.open_interest != null
-            ? r.open_interest - next.open_interest
-            : undefined,
-        d_large_usd:
-          next &&
-          r.large_spec_net_usd != null &&
-          next.large_spec_net_usd != null
-            ? r.large_spec_net_usd - next.large_spec_net_usd
-            : undefined,
-        d_small_usd: undefined,
-        d_comm_usd: undefined,
-      };
-    });
 
     return NextResponse.json({
       market: {

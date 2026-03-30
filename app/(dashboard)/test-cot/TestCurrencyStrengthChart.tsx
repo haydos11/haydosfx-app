@@ -74,7 +74,7 @@ export default function TestCurrencyStrengthChart({
   const [points, setPoints] = useState<Point[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [showUSD, setShowUSD] = useState(false);
+  const [showUSD, setShowUSD] = useState(true);
 
   useEffect(() => {
     let cancelled = false;

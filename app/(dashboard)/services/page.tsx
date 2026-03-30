@@ -22,12 +22,10 @@ export const metadata = {
 const LINKS = {
   coachingBooking: "https://buy.stripe.com/4gwbJzfNE0BwfKM5kp",
   premiumSubscribe: "https://buy.stripe.com/bIY4h7gRIbga6acdQX",
+  premiumManage: "https://billing.stripe.com/p/login/eVa03gdjQ0qP9qg4gg",
 
-  // ✅ Your NEW on-site application form route
   premiumApplication: "/premium/apply",
 
-  // ✅ Invite-only Discord request
-  // If you haven't built /discord/apply yet, change this back to your discord.gg invite
   discordRequest: "/services/discord/apply",
   // discordRequest: "https://discord.gg/TEENQdKuhb",
 };
@@ -119,6 +117,8 @@ function PriceCard({
   primaryLabel,
   secondaryHref,
   secondaryLabel,
+  tertiaryHref,
+  tertiaryLabel,
   featured,
 }: {
   title: string;
@@ -131,10 +131,13 @@ function PriceCard({
   primaryLabel: string;
   secondaryHref?: string;
   secondaryLabel?: string;
+  tertiaryHref?: string;
+  tertiaryLabel?: string;
   featured?: boolean;
 }) {
   const primaryExternal = isExternal(primaryHref);
   const secondaryExternal = secondaryHref ? isExternal(secondaryHref) : false;
+  const tertiaryExternal = tertiaryHref ? isExternal(tertiaryHref) : false;
 
   return (
     <div
@@ -212,32 +215,43 @@ function PriceCard({
         ))}
       </ul>
 
-      <div className="mt-6 flex flex-col gap-2 sm:flex-row">
-        <Link
-          href={primaryHref}
-          className={cn(
-            "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition",
-            featured
-              ? "border border-indigo-400/30 bg-indigo-500/20 text-indigo-100 hover:bg-indigo-500/30"
-              : "border border-white/10 bg-white/[0.05] text-slate-100 hover:bg-white/[0.08]"
-          )}
-          target={primaryExternal ? "_blank" : undefined}
-          rel={primaryExternal ? "noreferrer" : undefined}
-        >
-          {primaryLabel} <ArrowRight className="h-4 w-4" />
-        </Link>
+      <div className="mt-6 grid grid-cols-1 gap-2 sm:grid-cols-3">
+  <Link
+    href={primaryHref}
+    className={cn(
+      "inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition",
+      featured
+        ? "border border-indigo-400/30 bg-indigo-500/20 text-indigo-100 hover:bg-indigo-500/30"
+        : "border border-white/10 bg-white/[0.05] text-slate-100 hover:bg-white/[0.08]"
+    )}
+    target={primaryExternal ? "_blank" : undefined}
+    rel={primaryExternal ? "noreferrer" : undefined}
+  >
+    {primaryLabel} <ArrowRight className="h-4 w-4" />
+  </Link>
 
-        {secondaryHref && secondaryLabel ? (
-          <Link
-            href={secondaryHref}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-white/[0.07]"
-            target={secondaryExternal ? "_blank" : undefined}
-            rel={secondaryExternal ? "noreferrer" : undefined}
-          >
-            {secondaryLabel}
-          </Link>
-        ) : null}
-      </div>
+  {secondaryHref && secondaryLabel ? (
+    <Link
+      href={secondaryHref}
+      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-white/[0.07]"
+      target={secondaryExternal ? "_blank" : undefined}
+      rel={secondaryExternal ? "noreferrer" : undefined}
+    >
+      {secondaryLabel}
+    </Link>
+  ) : null}
+
+  {tertiaryHref && tertiaryLabel ? (
+    <Link
+      href={tertiaryHref}
+      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-white/[0.07]"
+      target={tertiaryExternal ? "_blank" : undefined}
+      rel={tertiaryExternal ? "noreferrer" : undefined}
+    >
+      {tertiaryLabel}
+    </Link>
+  ) : null}
+</div>
     </div>
   );
 }
@@ -268,7 +282,6 @@ export default function ServicesPage() {
             analysis, Discord, and proprietary indicators.
           </p>
 
-          {/* premium pills */}
           <div className="mt-8 flex flex-wrap justify-center gap-4">
             {TAGS.map((tag) => (
               <span
@@ -341,7 +354,7 @@ export default function ServicesPage() {
               "Recording sent after the session",
             ]}
             primaryHref={LINKS.coachingBooking}
-            primaryLabel="Book 1:1 coaching"
+            primaryLabel="Book a 1:1"
           />
 
           <PriceCard
@@ -359,7 +372,9 @@ export default function ServicesPage() {
             primaryHref={LINKS.premiumSubscribe}
             primaryLabel="Subscribe to Premium"
             secondaryHref={LINKS.premiumApplication}
-            secondaryLabel="Fill application form"
+            secondaryLabel="Application form"
+            tertiaryHref={LINKS.premiumManage}
+            tertiaryLabel="Manage billing"
             featured
           />
         </div>
@@ -369,13 +384,24 @@ export default function ServicesPage() {
             <span className="font-semibold text-slate-200">Premium onboarding:</span>{" "}
             please complete the application so I understand your background, goals, and current approach.
           </p>
+          <p className="mt-2 text-sm text-slate-400">
+            Already subscribed?{" "}
+            <Link
+              href={LINKS.premiumManage}
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-indigo-200 transition hover:text-white"
+            >
+              Manage your membership here
+            </Link>
+            .
+          </p>
         </div>
       </section>
 
-      {/* ✅ Free Discord (Invite Only) */}
-      {/* ✅ Free Discord (Invite Only) */}
-<section className="mt-10">
-  <div className="relative overflow-hidden rounded-3xl border border-yellow-400/30 bg-gradient-to-b from-yellow-500/12 via-yellow-400/6 to-white/[0.02] p-7 sm:p-8 shadow-lg">
+      {/* Free Discord (Invite Only) */}
+      <section className="mt-10">
+        <div className="relative overflow-hidden rounded-3xl border border-yellow-400/30 bg-gradient-to-b from-yellow-500/12 via-yellow-400/6 to-white/[0.02] p-7 shadow-lg sm:p-8">
           <div className="pointer-events-none absolute -right-20 -bottom-20 h-64 w-64 rounded-full bg-yellow-400/20 blur-3xl" />
 
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -387,13 +413,14 @@ export default function ServicesPage() {
 
               <h3 className="mt-3 text-xl font-semibold text-white">
                 Join the community (invite-only)
-                Free section available to all traders.
-Premium members receive full Discord access.
               </h3>
 
               <p className="mt-2 text-sm leading-relaxed text-slate-300">
-  Premium members receive full access to the private Discord with all streams, analysis and trading channels. There is also a smaller free community section available — access is invite-only to keep the group high quality and avoid spam bots.
-</p>
+                Free section available to all traders. Premium members receive full
+                access to the private Discord with all streams, analysis, and trading
+                channels. There is also a smaller free community section available —
+                access is invite-only to keep the group high quality and avoid spam bots.
+              </p>
             </div>
 
             <div className="flex flex-col gap-2 sm:flex-row">
@@ -430,7 +457,7 @@ Premium members receive full Discord access.
             },
             {
               q: "Do you offer refunds?",
-              a: "Coaching is time-based and non-refundable once booked. Premium is monthly — cancel any time before the next billing cycle.",
+              a: "Coaching is time-based and non-refundable once booked. Premium is monthly — cancel any time before the next billing cycle. Existing members can also use the manage membership link to update card details and billing settings.",
             },
           ].map((item) => (
             <div
@@ -455,7 +482,7 @@ Premium members receive full Discord access.
             If you want a tailored plan and accountability, book a 1:1.
           </p>
 
-          <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+          <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <Link
               href={LINKS.premiumSubscribe}
               className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-400/30 bg-indigo-500/25 px-4 py-2 text-sm font-semibold text-indigo-100 transition hover:bg-indigo-500/35"
@@ -472,6 +499,15 @@ Premium members receive full Discord access.
               rel="noreferrer"
             >
               Book 1:1 Coaching
+            </Link>
+
+            <Link
+              href={LINKS.premiumManage}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-white/[0.08]"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Manage Membership
             </Link>
           </div>
         </div>
