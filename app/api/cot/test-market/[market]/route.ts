@@ -12,8 +12,8 @@ const MARKET_KEY_TO_DB_CODE: Record<string, string> = {
   chf: "6S",
   mxn: "6M",
 
-  gold: "GC",
-  silver: "SI",
+  gold: "XAU",
+  silver: "XAG",
   copper: "HG",
 
   wti: "CL",
@@ -180,7 +180,10 @@ export async function GET(
     const rows = (data ?? []) as ServingRow[];
 
     if (!rows.length) {
-      return NextResponse.json({ error: "No rows found" }, { status: 404 });
+      return NextResponse.json(
+        { error: `No rows found for ${info.key} (${dbCode})` },
+        { status: 404 }
+      );
     }
 
     const dates: string[] = [];
