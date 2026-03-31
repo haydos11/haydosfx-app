@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { MarketInfo } from "@/lib/cot/markets";
 import { Info } from "lucide-react";
 import TestCurrencyStrengthChart from "./TestCurrencyStrengthChart";
+import AnalyzeCotButton, { type CotAnalysisInput } from "./AnalyzeCotButton";
 
 type TestSnapshotRow = {
   market_code: string;
@@ -39,6 +40,62 @@ type TestSnapshotRow = {
   priceDirection?: string | null;
   reaction?: string | null;
 };
+
+type FxScoreRow = {
+  code: string;
+  name: string;
+  totalScore: number;
+  positioningScore: number;
+  reactionScore: number;
+  usdFlowScore: number;
+  relativeMoveScore: number;
+  rank: number;
+  sideBias: "long" | "short" | "avoid";
+  reactionType: "confirmation" | "fade" | null;
+  movePct: number | null;
+};
+
+type PairIdea = {
+  pair: string;
+  direction: "long" | "short";
+  longCode: string;
+  shortCode: string;
+  scoreGap: number;
+  rationale: string;
+};
+
+const EXCLUDED_FX_CODES = new Set(["MXN"]);
+
+const STANDARD_FX_PAIRS = new Set([
+  "EURUSD",
+  "GBPUSD",
+  "AUDUSD",
+  "NZDUSD",
+  "USDJPY",
+  "USDCAD",
+  "USDCHF",
+  "EURGBP",
+  "EURJPY",
+  "EURAUD",
+  "EURNZD",
+  "EURCAD",
+  "EURCHF",
+  "GBPJPY",
+  "GBPAUD",
+  "GBPNZD",
+  "GBPCAD",
+  "GBPCHF",
+  "AUDJPY",
+  "AUDNZD",
+  "AUDCAD",
+  "AUDCHF",
+  "NZDJPY",
+  "NZDCAD",
+  "NZDCHF",
+  "CADJPY",
+  "CADCHF",
+  "CHFJPY",
+]);
 
 const CATS: Array<"ALL" | MarketInfo["group"] | "OTHER"> = [
   "ALL",
@@ -86,6 +143,10 @@ function fmtUsdDirectional(v: number | null | undefined) {
   if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
   if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}k`;
   return `${sign}$${abs.toFixed(0)}`;
+}
+
+function clamp(v: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, v));
 }
 
 function Badge({
@@ -188,6 +249,10 @@ function isFxRow(row: TestSnapshotRow) {
   return row.group === "FX";
 }
 
+function isScoredFxRow(row: TestSnapshotRow) {
+  return row.group === "FX" && !EXCLUDED_FX_CODES.has(row.code);
+}
+
 function getIndexedPath(row: TestSnapshotRow) {
   if (!isFxRow(row)) {
     return {
@@ -247,6 +312,324 @@ function reactionLabel(row: TestSnapshotRow) {
   return derived === "confirmation" ? "Confirmation" : "Fade";
 }
 
+function buildFxScores(allRows: TestSnapshotRow[]): FxScoreRow[] {
+  const fxRows = allRows.filter(isScoredFxRow);
+  if (!fxRows.length) return [];
+
+  const maxAbsMove = Math.max(
+    0.25,
+    ...fxRows.map((r) => Math.abs(r.movePct ?? 0))
+  );
+
+  const maxAbsUsdFlow = Math.max(
+    500_000_000,
+    ...fxRows.map((r) =>
+      Math.abs(
+        r.usdDirectional != null && r.prevUsdDirectional != null
+          ? r.usdDirectional - r.prevUsdDirectional
+          : 0
+      )
+    )
+  );
+
+  const scored = fxRows.map((row) => {
+    const reactionType = deriveShiftAwareReaction(row);
+    const movePct = row.movePct ?? 0;
+    const netPctOi = row.netPctOi ?? 0;
+    const usdFlowChange =
+      row.usdDirectional != null && row.prevUsdDirectional != null
+        ? row.usdDirectional - row.prevUsdDirectional
+        : 0;
+
+    const positioningScore = clamp(netPctOi / 5, -3, 3);
+
+    let reactionScore = 0;
+    if (reactionType === "confirmation") {
+      reactionScore = movePct >= 0 ? 2.5 : -2.5;
+    } else if (reactionType === "fade") {
+      reactionScore = movePct >= 0 ? 1.25 : -1.25;
+    }
+
+    const usdFlowScore = clamp((usdFlowChange / maxAbsUsdFlow) * 3, -3, 3);
+    const relativeMoveScore = clamp((movePct / maxAbsMove) * 3, -3, 3);
+
+    const totalScore =
+      positioningScore * 0.3 +
+      reactionScore * 0.3 +
+      usdFlowScore * 0.2 +
+      relativeMoveScore * 0.2;
+
+    let sideBias: "long" | "short" | "avoid" = "avoid";
+    if (totalScore >= 1) sideBias = "long";
+    else if (totalScore <= -1) sideBias = "short";
+
+    return {
+      code: row.code,
+      name: row.name,
+      totalScore,
+      positioningScore,
+      reactionScore,
+      usdFlowScore,
+      relativeMoveScore,
+      rank: 0,
+      sideBias,
+      reactionType,
+      movePct: row.movePct ?? null,
+    };
+  });
+
+  return scored;
+}
+
+function buildSyntheticUsdScore(nonUsdScores: FxScoreRow[]): FxScoreRow | null {
+  if (!nonUsdScores.length) return null;
+
+  const avgPositioning =
+    nonUsdScores.reduce((sum, s) => sum + s.positioningScore, 0) / nonUsdScores.length;
+  const avgReaction =
+    nonUsdScores.reduce((sum, s) => sum + s.reactionScore, 0) / nonUsdScores.length;
+  const avgUsdFlow =
+    nonUsdScores.reduce((sum, s) => sum + s.usdFlowScore, 0) / nonUsdScores.length;
+  const avgMove =
+    nonUsdScores.reduce((sum, s) => sum + s.relativeMoveScore, 0) / nonUsdScores.length;
+
+  const positioningScore = -avgPositioning;
+  const reactionScore = -avgReaction;
+  const usdFlowScore = -avgUsdFlow;
+  const relativeMoveScore = -avgMove;
+
+  const totalScore =
+    positioningScore * 0.3 +
+    reactionScore * 0.3 +
+    usdFlowScore * 0.2 +
+    relativeMoveScore * 0.2;
+
+  let sideBias: "long" | "short" | "avoid" = "avoid";
+  if (totalScore >= 1) sideBias = "long";
+  else if (totalScore <= -1) sideBias = "short";
+
+  let reactionType: "confirmation" | "fade" | null = null;
+  if (reactionScore >= 0.75) reactionType = "confirmation";
+  else if (reactionScore <= -0.75) reactionType = "fade";
+
+  return {
+    code: "USD",
+    name: "US Dollar",
+    totalScore,
+    positioningScore,
+    reactionScore,
+    usdFlowScore,
+    relativeMoveScore,
+    rank: 0,
+    sideBias,
+    reactionType,
+    movePct: null,
+  };
+}
+
+function rankCurrencyScores(baseScores: FxScoreRow[]): FxScoreRow[] {
+  const ranked = [...baseScores].sort((a, b) => b.totalScore - a.totalScore);
+  return ranked.map((row, idx) => ({
+    ...row,
+    rank: idx + 1,
+  }));
+}
+
+function resolveTradablePair(
+  longCode: string,
+  shortCode: string
+): { pair: string; direction: "long" | "short" } | null {
+  const direct = `${longCode}${shortCode}`;
+  if (STANDARD_FX_PAIRS.has(direct)) {
+    return { pair: direct, direction: "long" };
+  }
+
+  const inverse = `${shortCode}${longCode}`;
+  if (STANDARD_FX_PAIRS.has(inverse)) {
+    return { pair: inverse, direction: "short" };
+  }
+
+  return null;
+}
+
+function buildTopPairIdeas(scores: FxScoreRow[]): PairIdea[] {
+  if (scores.length < 2) return [];
+
+  const strongest = scores.slice(0, Math.min(5, scores.length));
+  const weakest = [...scores].reverse().slice(0, Math.min(5, scores.length));
+
+  const ideas: PairIdea[] = [];
+
+  for (const strong of strongest) {
+    for (const weak of weakest) {
+      if (strong.code === weak.code) continue;
+
+      const scoreGap = strong.totalScore - weak.totalScore;
+      if (scoreGap <= 0) continue;
+
+      const resolved = resolveTradablePair(strong.code, weak.code);
+      if (!resolved) continue;
+
+      const rationale = `${strong.code} ranks stronger than ${weak.code} on positioning, indexed reaction, and inferred USD-flow-relative logic.`;
+
+      ideas.push({
+        pair: resolved.pair,
+        direction: resolved.direction,
+        longCode: strong.code,
+        shortCode: weak.code,
+        scoreGap,
+        rationale,
+      });
+    }
+  }
+
+  const unique = new Map<string, PairIdea>();
+  for (const idea of ideas.sort((a, b) => b.scoreGap - a.scoreGap)) {
+    const key = `${idea.pair}:${idea.direction}`;
+    if (!unique.has(key)) unique.set(key, idea);
+  }
+
+  return Array.from(unique.values()).slice(0, 5);
+}
+
+function buildSnapshotAnalysisInput(
+  row: TestSnapshotRow,
+  allRows: TestSnapshotRow[],
+  range: string,
+  allCurrencyScores: FxScoreRow[],
+  topPairIdeas: PairIdea[],
+  syntheticUsd: FxScoreRow | null
+): CotAnalysisInput {
+  const isFx = isScoredFxRow(row);
+  const fxPeers = allRows.filter((r) => isScoredFxRow(r) && r.code !== row.code);
+
+  const confirmationCount = fxPeers.filter(
+    (r) => deriveShiftAwareReaction(r) === "confirmation"
+  ).length;
+
+  const fadeCount = fxPeers.filter(
+    (r) => deriveShiftAwareReaction(r) === "fade"
+  ).length;
+
+  const current = allCurrencyScores.find((x) => x.code === row.code) ?? null;
+
+  const strongerPeers = current
+    ? allCurrencyScores
+        .filter((s) => s.code !== row.code && s.code !== "USD" && s.totalScore > current.totalScore)
+        .slice(0, 3)
+        .map((s) => s.code)
+    : [];
+
+  const weakerPeers = current
+    ? [...allCurrencyScores]
+        .filter((s) => s.code !== row.code && s.code !== "USD" && s.totalScore < current.totalScore)
+        .slice(-3)
+        .map((s) => s.code)
+    : [];
+
+  const path = getIndexedPath(row);
+  const weeklyUsdDirectionalChange =
+    row.usdDirectional != null && row.prevUsdDirectional != null
+      ? row.usdDirectional - row.prevUsdDirectional
+      : null;
+
+  const reactionType = deriveShiftAwareReaction(row);
+
+  const relevantPairIdeas = isFx
+    ? topPairIdeas.filter(
+        (p) => p.longCode === row.code || p.shortCode === row.code
+      )
+    : [];
+
+  return {
+    asset: row.name,
+    code: row.code,
+    group: row.group,
+    range,
+    latestDate: row.date,
+
+    latestNet: row.netContracts,
+    prevNet: row.prevNet,
+    weeklyChange: row.weeklyChange,
+
+    longPct: row.longPct,
+    shortPct: row.shortPct,
+    netPctOi: row.netPctOi,
+
+    latestLargeUsd: row.usdDirectional,
+    weeklyLargeUsdChange: weeklyUsdDirectionalChange,
+
+    indexedReportPrice: path.isIndexed ? path.report : null,
+    indexedReleasePrice: path.isIndexed ? path.release : null,
+    reportPrice: row.reportPrice,
+    releasePrice: row.releasePrice,
+    movePct: row.movePct,
+    priceDirection: row.priceDirection,
+    reactionType,
+    isFx,
+
+    crossMarket: isFx
+      ? {
+          peerCount: fxPeers.length,
+          confirmationCount,
+          fadeCount,
+          strongerPeers,
+          weakerPeers,
+          summary:
+            fxPeers.length > 0
+              ? `${confirmationCount} FX confirmations and ${fadeCount} fades across peers this week, excluding MXN.`
+              : null,
+        }
+      : null,
+
+    peerRanking: isFx && current
+      ? {
+          rank: current.rank,
+          totalPeers: allCurrencyScores.length,
+          score: current.totalScore,
+          positioningScore: current.positioningScore,
+          reactionScore: current.reactionScore,
+          usdFlowScore: current.usdFlowScore,
+          relativeMoveScore: current.relativeMoveScore,
+          strongestPeers: allCurrencyScores.slice(0, 3).map((s) => s.code),
+          weakestPeers: [...allCurrencyScores].slice(-3).map((s) => s.code),
+          sideBias: current.sideBias,
+          summary: `${row.code} ranks ${current.rank}/${allCurrencyScores.length} across the tradable FX complex including synthetic USD, excluding MXN.`,
+        }
+      : null,
+
+    syntheticUsd: syntheticUsd
+      ? {
+          included: true,
+          score: syntheticUsd.totalScore,
+          sideBias: syntheticUsd.sideBias,
+          reactionType: syntheticUsd.reactionType,
+          summary: `Synthetic USD is inferred from the inverse FX basket and currently has a ${syntheticUsd.sideBias} bias.`,
+        }
+      : null,
+
+    pairIdeas: isFx
+      ? {
+          topSetups: relevantPairIdeas.map((idea) => ({
+            pair: idea.pair,
+            direction: idea.direction,
+            longCode: idea.longCode,
+            shortCode: idea.shortCode,
+            scoreGap: idea.scoreGap,
+            rationale: idea.rationale,
+          })),
+          summary:
+            relevantPairIdeas.length > 0
+              ? `${relevantPairIdeas.length} top-ranked tradable pair idea(s) involve ${row.code}.`
+              : `${row.code} is not currently in the top-ranked tradable pair list.`,
+        }
+      : null,
+
+    notes:
+      "Snapshot-based analysis using currently available fields only: net change, long/short %, net % OI, USD directional exposure, indexed report-to-release reaction, peer ranking, synthetic USD inference, and tradable pair ideas. MXN excluded from FX comparison.",
+  };
+}
+
 export default function TestCotPageClient() {
   const [rows, setRows] = useState<TestSnapshotRow[]>([]);
   const [date, setDate] = useState<string | null>(null);
@@ -296,24 +679,44 @@ export default function TestCotPageClient() {
 
   const summary = useMemo(() => {
     const fxRows = rows.filter((r) => r.group === "FX");
-    const usdDirectional = fxRows.reduce(
+    const scoredFxRows = rows.filter(isScoredFxRow);
+
+    const usdDirectional = scoredFxRows.reduce(
       (sum, row) => sum + (row.usdDirectional ?? 0),
       0
     );
 
-    const confirmations = fxRows.filter(
+    const confirmations = scoredFxRows.filter(
       (r) => deriveShiftAwareReaction(r) === "confirmation"
     ).length;
-    const fades = fxRows.filter((r) => deriveShiftAwareReaction(r) === "fade").length;
+    const fades = scoredFxRows.filter((r) => deriveShiftAwareReaction(r) === "fade").length;
 
     return {
       totalMarkets: rows.length,
       fxMarkets: fxRows.length,
+      scoredFxMarkets: scoredFxRows.length,
       usdDirectional,
       confirmations,
       fades,
     };
   }, [rows]);
+
+  const nonUsdScores = useMemo(() => buildFxScores(rows), [rows]);
+
+  const syntheticUsd = useMemo(
+    () => buildSyntheticUsdScore(nonUsdScores),
+    [nonUsdScores]
+  );
+
+  const allCurrencyScores = useMemo(() => {
+    const base = syntheticUsd ? [...nonUsdScores, syntheticUsd] : [...nonUsdScores];
+    return rankCurrencyScores(base);
+  }, [nonUsdScores, syntheticUsd]);
+
+  const topPairIdeas = useMemo(
+    () => buildTopPairIdeas(allCurrencyScores),
+    [allCurrencyScores]
+  );
 
   return (
     <div className="min-w-0 space-y-6">
@@ -343,6 +746,9 @@ export default function TestCotPageClient() {
           <div className="mt-2 text-lg font-semibold text-slate-100">
             {fmtUsdDirectional(summary.usdDirectional)}
           </div>
+          <div className="mt-1 text-xs text-slate-500">
+            Excluding MXN
+          </div>
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
@@ -352,6 +758,9 @@ export default function TestCotPageClient() {
           <div className="mt-2 text-lg font-semibold text-emerald-300">
             {summary.confirmations}
           </div>
+          <div className="mt-1 text-xs text-slate-500">
+            Excluding MXN
+          </div>
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
@@ -360,6 +769,9 @@ export default function TestCotPageClient() {
           </div>
           <div className="mt-2 text-lg font-semibold text-amber-300">
             {summary.fades}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">
+            Excluding MXN
           </div>
         </div>
       </div>
@@ -443,6 +855,9 @@ export default function TestCotPageClient() {
                     <TooltipInfo text={reactionHelpText()} align="right" />
                   </div>
                 </th>
+                <th className="w-[36px] px-1 py-3 text-center font-medium text-slate-600">
+                  AI
+                </th>
               </tr>
             </thead>
 
@@ -452,6 +867,15 @@ export default function TestCotPageClient() {
                 const shiftReaction = deriveShiftAwareReaction(r);
                 const hasReaction =
                   r.reportPrice != null || r.releasePrice != null || r.movePct != null;
+
+                const analysisInput: CotAnalysisInput = buildSnapshotAnalysisInput(
+                  r,
+                  rows,
+                  range,
+                  allCurrencyScores,
+                  topPairIdeas,
+                  syntheticUsd
+                );
 
                 return (
                   <tr
@@ -557,13 +981,17 @@ export default function TestCotPageClient() {
                         </div>
                       )}
                     </td>
+
+                    <td className="w-[36px] px-1 py-2.5 text-center">
+                      <AnalyzeCotButton input={analysisInput} compact />
+                    </td>
                   </tr>
                 );
               })}
 
               {!loading && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={15} className="px-4 py-6 text-slate-400">
+                  <td colSpan={16} className="px-4 py-6 text-slate-400">
                     No results
                   </td>
                 </tr>
@@ -571,6 +999,11 @@ export default function TestCotPageClient() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div className="flex items-center gap-2 text-xs text-slate-500">
+        <span>Price path note:</span>
+        <TooltipInfo text={pricePathHelpText()} />
       </div>
     </div>
   );
