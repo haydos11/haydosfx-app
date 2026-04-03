@@ -1,9 +1,5 @@
 import { NextResponse } from "next/server";
 import { syncCotReports } from "@/lib/cot/pipeline/sync";
-import { exec } from "child_process";
-import util from "util";
-
-const execAsync = util.promisify(exec);
 
 export const runtime = "nodejs";
 
@@ -18,14 +14,10 @@ export async function GET(req: Request) {
 
     console.log("Starting COT sync...");
 
-    // 1. Sync reports
+    // ✅ Only run working pipeline
     const cotResult = await syncCotReports("cron");
-    console.log("COT sync done:", cotResult);
 
-    // 2. Sync prices
-    console.log("Starting price sync...");
-    await execAsync("node scripts/sync-cot-market-prices.ts");
-    console.log("Price sync done");
+    console.log("COT sync done:", cotResult);
 
     return NextResponse.json({
       ok: true,
