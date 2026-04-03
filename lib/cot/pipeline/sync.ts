@@ -74,6 +74,34 @@ async function resolveFetchStartDate(source: string): Promise<string | null> {
   return addUtcDays(latestKnown, -CRON_OVERLAP_DAYS);
 }
 
+type TransformedRowLike = {
+  market_code: string;
+  report_date: string;
+};
+
+function dedupeTransformedRows<T extends TransformedRowLike>(rows: T[]): T[] {
+  const seen = new Map<string, T>();
+
+  for (const row of rows) {
+    const key = `${String(row.market_code).toUpperCase()}__${String(
+      row.report_date
+    ).slice(0, 10)}`;
+
+    // Keep the latest encountered version
+    seen.set(key, row);
+  }
+
+  return [...seen.values()].sort((a, b) => {
+    const aCode = String(a.market_code).toUpperCase();
+    const bCode = String(b.market_code).toUpperCase();
+
+    if (aCode < bCode) return -1;
+    if (aCode > bCode) return 1;
+
+    return String(a.report_date).localeCompare(String(b.report_date));
+  });
+}
+
 export async function syncCotReports(source = "manual"): Promise<SyncResult> {
   const supabase = getSupabaseAdmin();
 
@@ -125,7 +153,9 @@ export async function syncCotReports(source = "manual"): Promise<SyncResult> {
     const fetchStartDate = await resolveFetchStartDate(source);
 
     const rawRows = await fetchRawCotData(fetchKeys, fetchStartDate);
-    const transformed = transformCotRows(rawRows, typedMeta);
+
+    const transformedRaw = transformCotRows(rawRows, typedMeta);
+    const transformed = dedupeTransformedRows(transformedRaw);
 
     const latestReportDateSeen =
       transformed.length > 0
@@ -174,6 +204,8 @@ export async function syncCotReports(source = "manual"): Promise<SyncResult> {
           onlyFetchKeys: ONLY_FETCH_KEYS,
           upsertChunkSize: UPSERT_CHUNK_SIZE,
           cronOverlapDays: CRON_OVERLAP_DAYS,
+          rowsTransformedBeforeDedupe: transformedRaw.length,
+          rowsTransformedAfterDedupe: transformed.length,
         },
       })
       .eq("id", runId);
