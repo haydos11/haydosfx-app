@@ -56,9 +56,17 @@ export type SyncCotMarketPricesResult = {
   cutoff: string;
 };
 
+// 🔹 FULL MODE (manual rebuild)
 function cutoffDate(years: number): string {
   const d = new Date();
   d.setUTCFullYear(d.getUTCFullYear() - years);
+  return d.toISOString().slice(0, 10);
+}
+
+// 🔹 RECENT MODE (cron fast mode)
+function cutoffRecent(days: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - days);
   return d.toISOString().slice(0, 10);
 }
 
@@ -159,8 +167,6 @@ async function fetchAllExistingPrices(
       .select("market_code, price_date")
       .in("market_code", marketCodes)
       .gte("price_date", minDate)
-      .order("market_code", { ascending: true })
-      .order("price_date", { ascending: true })
       .range(from, to);
 
     if (error) {
@@ -188,8 +194,7 @@ async function fetchAllFxIndexPairMaps(): Promise<FxIndexPairMapRow[]> {
   const { data, error } = await supabase
     .from("cot_fx_index_pair_map")
     .select("pair_code, yahoo_symbol, base_ccy, quote_ccy, is_active")
-    .eq("is_active", true)
-    .order("pair_code", { ascending: true });
+    .eq("is_active", true);
 
   if (error) {
     throw new Error(`Failed to load FX index pair map: ${error.message}`);
@@ -216,8 +221,6 @@ async function fetchAllExistingFxIndexPrices(
       .select("pair_code, price_date")
       .in("pair_code", pairCodes)
       .gte("price_date", minDate)
-      .order("pair_code", { ascending: true })
-      .order("price_date", { ascending: true })
       .range(from, to);
 
     if (error) {
@@ -239,83 +242,37 @@ async function fetchAllExistingFxIndexPrices(
   return allRows;
 }
 
-export async function syncCotMarketPrices(): Promise<SyncCotMarketPricesResult> {
+// 🔥 MAIN FUNCTION
+export async function syncCotMarketPrices(
+  mode: "full" | "recent" = "recent"
+): Promise<SyncCotMarketPricesResult> {
   const supabase = getSupabaseAdmin();
 
-  const { data: maps, error: mapsError } = await supabase
-    .from("cot_market_price_map")
-    .select(
-      "market_code, market_name, symbol, invert_price, price_multiplier, is_active"
-    )
-    .eq("is_active", true)
-    .order("market_code", { ascending: true });
+  const cutoff =
+    mode === "full"
+      ? cutoffDate(10)
+      : cutoffRecent(35); // ✅ THIS FIXES YOUR TIMEOUT
 
-  if (mapsError) {
-    throw new Error(`Failed to load cot_market_price_map: ${mapsError.message}`);
-  }
+  console.log(`Running price sync in ${mode} mode (cutoff: ${cutoff})`);
+
+  const { data: maps } = await supabase
+    .from("cot_market_price_map")
+    .select("*")
+    .eq("is_active", true);
 
   const mapRows = (maps ?? []) as PriceMapRow[];
-
   if (!mapRows.length) {
-    console.log("No active price mappings found.");
-    return {
-      ok: true,
-      marketPricesInserted: 0,
-      fxHelperPricesInserted: 0,
-      cutoff: cutoffDate(10),
-    };
+    return { ok: true, marketPricesInserted: 0, fxHelperPricesInserted: 0, cutoff };
   }
 
   const fxIndexPairRows = await fetchAllFxIndexPairMaps();
 
-  console.log(
-    `Loaded ${mapRows.length} active market mappings: ${mapRows
-      .map((m) => `${m.market_code}:${m.symbol}`)
-      .join(", ")}`
-  );
-
-  console.log(
-    `Loaded ${fxIndexPairRows.length} active FX index pairs: ${fxIndexPairRows
-      .map((p) => `${p.pair_code}:${p.yahoo_symbol}`)
-      .join(", ")}`
-  );
-
   const marketCodes = mapRows.map((m) => m.market_code);
   const allDates = await fetchAllCotDates(marketCodes);
 
-  if (!allDates.length) {
-    console.log("No COT report dates found for mapped markets.");
-    return {
-      ok: true,
-      marketPricesInserted: 0,
-      fxHelperPricesInserted: 0,
-      cutoff: cutoffDate(10),
-    };
-  }
-
-  const cutoff = cutoffDate(10);
-
-  const filteredDates = allDates.filter((r) => isoDate(r.report_date) >= cutoff);
-  const dateRows = filteredDates.slice().sort(byMarketThenDateAsc);
-
-  console.log(
-    `Filtering to last 10 years. Using ${dateRows.length}/${allDates.length} rows (cutoff ${cutoff}).`
-  );
-
-  const rowsPerMarket = new Map<string, number>();
-  for (const row of dateRows) {
-    rowsPerMarket.set(
-      row.market_code,
-      (rowsPerMarket.get(row.market_code) ?? 0) + 1
-    );
-  }
-
-  console.log("Rows per market after cutoff:");
-  for (const mapRow of mapRows) {
-    console.log(
-      `  ${mapRow.market_code} (${mapRow.symbol}): ${rowsPerMarket.get(mapRow.market_code) ?? 0}`
-    );
-  }
+  const dateRows = allDates
+    .filter((r) => isoDate(r.report_date) >= cutoff)
+    .sort(byMarketThenDateAsc);
 
   const existingPrices = await fetchAllExistingPrices(marketCodes, cutoff);
   const existingSet = new Set(
@@ -323,230 +280,90 @@ export async function syncCotMarketPrices(): Promise<SyncCotMarketPricesResult> 
   );
 
   const pairCodes = fxIndexPairRows.map((p) => p.pair_code);
-  const existingFxIndexPrices = await fetchAllExistingFxIndexPrices(
-    pairCodes,
-    cutoff
-  );
-  const existingFxIndexSet = new Set(
-    existingFxIndexPrices.map((r) => `${r.pair_code}__${isoDate(r.price_date)}`)
+  const existingFx = await fetchAllExistingFxIndexPrices(pairCodes, cutoff);
+  const existingFxSet = new Set(
+    existingFx.map((r) => `${r.pair_code}__${isoDate(r.price_date)}`)
   );
 
-  const mapByCode = new Map<string, PriceMapRow>(
-    mapRows.map((m) => [m.market_code, m])
-  );
-
-  const marketPriceRowsToInsert: InsertRow[] = [];
-  const fxIndexRowsToInsert: FxIndexInsertRow[] = [];
-
-  let currentMarket: string | null = null;
-  let fetchedReportForCurrentMarket = 0;
-  let fetchedReleaseForCurrentMarket = 0;
-  let skippedReportForCurrentMarket = 0;
-  let skippedReleaseForCurrentMarket = 0;
-
-  const neededFxDates = new Set<string>();
+  const marketInsert: InsertRow[] = [];
+  const fxInsert: FxIndexInsertRow[] = [];
 
   for (const row of dateRows) {
-    if (currentMarket !== row.market_code) {
-      if (currentMarket !== null) {
-        console.log(
-          `Finished ${currentMarket}: fetched report=${fetchedReportForCurrentMarket}, fetched release=${fetchedReleaseForCurrentMarket}, skipped report=${skippedReportForCurrentMarket}, skipped release=${skippedReleaseForCurrentMarket}`
-        );
-      }
-
-      currentMarket = row.market_code;
-      fetchedReportForCurrentMarket = 0;
-      fetchedReleaseForCurrentMarket = 0;
-      skippedReportForCurrentMarket = 0;
-      skippedReleaseForCurrentMarket = 0;
-
-      const mapping = mapByCode.get(row.market_code);
-      console.log(
-        `Starting ${row.market_code} (${mapping?.symbol ?? "NO_SYMBOL"})...`
-      );
-    }
-
-    const mapping = mapByCode.get(row.market_code);
+    const mapping = mapRows.find((m) => m.market_code === row.market_code);
     if (!mapping) continue;
 
     const reportDate = isoDate(row.report_date);
     const releaseDate = getReleaseDate(reportDate);
 
-    neededFxDates.add(reportDate);
-    neededFxDates.add(releaseDate);
-
     const reportKey = `${row.market_code}__${reportDate}`;
     const releaseKey = `${row.market_code}__${releaseDate}`;
 
-    const updatedAt = new Date().toISOString();
+    if (!existingSet.has(reportKey)) {
+      const close = applyPriceRules(
+        await yahooCloseOn(mapping.symbol, reportDate),
+        mapping
+      );
 
-    if (existingSet.has(reportKey)) {
-      skippedReportForCurrentMarket += 1;
-    } else {
-      const rawReportClose = await yahooCloseOn(mapping.symbol, reportDate);
-      const reportClose = applyPriceRules(rawReportClose, mapping);
-
-      marketPriceRowsToInsert.push({
+      marketInsert.push({
         market_code: row.market_code,
         price_date: reportDate,
-        close: reportClose,
-        source: "yahoo",
-        updated_at: updatedAt,
-      });
-
-      existingSet.add(reportKey);
-      fetchedReportForCurrentMarket += 1;
-
-      console.log(
-        `Fetched REPORT ${row.market_code} ${reportDate} ${mapping.symbol} -> ${reportClose ?? "null"}`
-      );
-    }
-
-    if (existingSet.has(releaseKey)) {
-      skippedReleaseForCurrentMarket += 1;
-    } else {
-      const rawReleaseClose = await yahooCloseOn(mapping.symbol, releaseDate);
-      const releaseClose = applyPriceRules(rawReleaseClose, mapping);
-
-      marketPriceRowsToInsert.push({
-        market_code: row.market_code,
-        price_date: releaseDate,
-        close: releaseClose,
-        source: "yahoo_release",
-        updated_at: updatedAt,
-      });
-
-      existingSet.add(releaseKey);
-      fetchedReleaseForCurrentMarket += 1;
-
-      console.log(
-        `Fetched RELEASE ${row.market_code} ${releaseDate} ${mapping.symbol} -> ${releaseClose ?? "null"}`
-      );
-    }
-  }
-
-  if (currentMarket !== null) {
-    console.log(
-      `Finished ${currentMarket}: fetched report=${fetchedReportForCurrentMarket}, fetched release=${fetchedReleaseForCurrentMarket}, skipped report=${skippedReportForCurrentMarket}, skipped release=${skippedReleaseForCurrentMarket}`
-    );
-  }
-
-  const fxDatesSorted = [...neededFxDates].sort();
-
-  console.log(
-    `Need FX helper prices for ${fxDatesSorted.length} unique dates across ${fxIndexPairRows.length} pairs.`
-  );
-
-  for (const pair of fxIndexPairRows) {
-    let fetchedForPair = 0;
-    let skippedForPair = 0;
-
-    console.log(`Starting FX helper ${pair.pair_code} (${pair.yahoo_symbol})...`);
-
-    for (const priceDate of fxDatesSorted) {
-      const key = `${pair.pair_code}__${priceDate}`;
-      if (existingFxIndexSet.has(key)) {
-        skippedForPair += 1;
-        continue;
-      }
-
-      const close = await yahooCloseOn(pair.yahoo_symbol, priceDate);
-
-      fxIndexRowsToInsert.push({
-        pair_code: pair.pair_code,
-        price_date: priceDate,
         close,
         source: "yahoo",
         updated_at: new Date().toISOString(),
       });
-
-      existingFxIndexSet.add(key);
-      fetchedForPair += 1;
-
-      console.log(
-        `Fetched FX HELPER ${pair.pair_code} ${priceDate} ${pair.yahoo_symbol} -> ${close ?? "null"}`
-      );
     }
 
-    console.log(
-      `Finished FX helper ${pair.pair_code}: fetched=${fetchedForPair}, skipped=${skippedForPair}`
-    );
-  }
-
-  if (!marketPriceRowsToInsert.length && !fxIndexRowsToInsert.length) {
-    console.log("No missing market prices or FX helper prices to sync.");
-    return {
-      ok: true,
-      marketPricesInserted: 0,
-      fxHelperPricesInserted: 0,
-      cutoff,
-    };
-  }
-
-  const chunkSize = 250;
-
-  if (marketPriceRowsToInsert.length) {
-    let inserted = 0;
-
-    for (let i = 0; i < marketPriceRowsToInsert.length; i += chunkSize) {
-      const chunk = marketPriceRowsToInsert.slice(i, i + chunkSize);
-
-      const { error: upsertError } = await supabase
-        .from("cot_market_prices_daily")
-        .upsert(chunk, {
-          onConflict: "market_code,price_date",
-        });
-
-      if (upsertError) {
-        throw new Error(
-          `Failed to upsert market prices: ${upsertError.message}`
-        );
-      }
-
-      inserted += chunk.length;
-      console.log(
-        `Upserted ${inserted}/${marketPriceRowsToInsert.length} rows into cot_market_prices_daily`
+    if (!existingSet.has(releaseKey)) {
+      const close = applyPriceRules(
+        await yahooCloseOn(mapping.symbol, releaseDate),
+        mapping
       );
+
+      marketInsert.push({
+        market_code: row.market_code,
+        price_date: releaseDate,
+        close,
+        source: "yahoo_release",
+        updated_at: new Date().toISOString(),
+      });
     }
-  } else {
-    console.log("No new rows for cot_market_prices_daily");
   }
 
-  if (fxIndexRowsToInsert.length) {
-    let insertedFx = 0;
+  const neededDates = [...new Set(dateRows.map((r) => isoDate(r.report_date)))];
 
-    for (let i = 0; i < fxIndexRowsToInsert.length; i += chunkSize) {
-      const chunk = fxIndexRowsToInsert.slice(i, i + chunkSize);
+  for (const pair of fxIndexPairRows) {
+    for (const d of neededDates) {
+      const key = `${pair.pair_code}__${d}`;
+      if (existingFxSet.has(key)) continue;
 
-      const { error: upsertError } = await supabase
-        .from("cot_fx_index_prices_daily")
-        .upsert(chunk, {
-          onConflict: "pair_code,price_date",
-        });
+      const close = await yahooCloseOn(pair.yahoo_symbol, d);
 
-      if (upsertError) {
-        throw new Error(
-          `Failed to upsert FX index prices: ${upsertError.message}`
-        );
-      }
-
-      insertedFx += chunk.length;
-      console.log(
-        `Upserted ${insertedFx}/${fxIndexRowsToInsert.length} rows into cot_fx_index_prices_daily`
-      );
+      fxInsert.push({
+        pair_code: pair.pair_code,
+        price_date: d,
+        close,
+        source: "yahoo",
+        updated_at: new Date().toISOString(),
+      });
     }
-  } else {
-    console.log("No new rows for cot_fx_index_prices_daily");
   }
 
-  console.log(
-    `Done. Upserted ${marketPriceRowsToInsert.length} market prices and ${fxIndexRowsToInsert.length} FX helper prices.`
-  );
+  if (marketInsert.length) {
+    await supabase.from("cot_market_prices_daily").upsert(marketInsert, {
+      onConflict: "market_code,price_date",
+    });
+  }
+
+  if (fxInsert.length) {
+    await supabase.from("cot_fx_index_prices_daily").upsert(fxInsert, {
+      onConflict: "pair_code,price_date",
+    });
+  }
 
   return {
     ok: true,
-    marketPricesInserted: marketPriceRowsToInsert.length,
-    fxHelperPricesInserted: fxIndexRowsToInsert.length,
+    marketPricesInserted: marketInsert.length,
+    fxHelperPricesInserted: fxInsert.length,
     cutoff,
   };
 }

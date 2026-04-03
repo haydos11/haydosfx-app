@@ -1,36 +1,52 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { syncCotReports } from "@/lib/cot/pipeline/sync";
 import { syncCotMarketPrices } from "@/lib/cot/pipeline/sync-market-prices";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-export async function GET(req: Request) {
+function isAuthorized(req: NextRequest): boolean {
+  const authHeader = req.headers.get("authorization");
+  if (authHeader === `Bearer ${process.env.CRON_SECRET}`) return true;
+
+  const url = new URL(req.url);
+  const key = url.searchParams.get("key");
+  return !!process.env.CRON_SECRET && key === process.env.CRON_SECRET;
+}
+
+export async function GET(req: NextRequest) {
+  if (!isAuthorized(req)) {
+    return NextResponse.json(
+      { ok: false, error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
   try {
-    const url = new URL(req.url);
-    const secret = url.searchParams.get("key");
+    console.log("=== CRON START ===");
 
-    if (secret !== process.env.CRON_SECRET) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    console.log("=== COT CRON START ===");
-
-    // 1. COT reports
+    // 1. Sync COT reports (already efficient)
     const cotResult = await syncCotReports("cron");
-    console.log("COT sync done");
+    console.log("COT sync complete");
 
-    // 2. Market + FX prices (YOUR FULL ENGINE)
-    const priceResult = await syncCotMarketPrices();
-    console.log("Price sync done", priceResult);
+    // 2. Sync ONLY recent prices (FAST)
+    const priceResult = await syncCotMarketPrices("recent");
+    console.log("Price sync complete", priceResult);
 
     return NextResponse.json({
       ok: true,
       cot: cotResult,
       prices: priceResult,
     });
-  } catch (err) {
-    console.error("Cron failed:", err);
-    return NextResponse.json({ error: "Cron failed" }, { status: 500 });
+  } catch (error) {
+    console.error("[cron/sync-cot] fatal:", error);
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 }
+    );
   }
 }
