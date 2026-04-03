@@ -2,7 +2,7 @@ import { MARKETS } from "../markets";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { fetchRawCotData } from "./fetch";
 import { transformCotRows } from "./transform";
-import type { CotMarketMeta, CotReportRow } from "./types";
+import type { CotMarketMeta } from "./types";
 
 type SyncResult = {
   rowsFetched: number;
@@ -17,11 +17,14 @@ const EXTRA_SOCRATA_FETCH_KEYS = [
   "BRITISH POUND - CHICAGO MERCANTILE EXCHANGE",
 ];
 
-// Temporary focused repair mode for the broken markets.
+// Temporary focused repair mode for broken markets.
 // Set to null to run everything again later.
 const ONLY_FETCH_KEYS: string[] | null = null;
 
 const UPSERT_CHUNK_SIZE = 500;
+
+// For cron runs, re-fetch a small overlap window in case of late reports / revisions.
+const CRON_OVERLAP_DAYS = 21;
 
 function chunkArray<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -29,6 +32,46 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
     out.push(arr.slice(i, i + size));
   }
   return out;
+}
+
+function addUtcDays(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function isCronSource(source: string): boolean {
+  return /cron/i.test(source);
+}
+
+async function getLatestKnownReportDate(): Promise<string | null> {
+  const supabase = getSupabaseAdmin();
+
+  const { data, error } = await supabase
+    .from("cot_reports")
+    .select("report_date")
+    .order("report_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load latest cot_reports date: ${error.message}`);
+  }
+
+  return data?.report_date ? String(data.report_date).slice(0, 10) : null;
+}
+
+async function resolveFetchStartDate(source: string): Promise<string | null> {
+  if (!isCronSource(source)) {
+    return null;
+  }
+
+  const latestKnown = await getLatestKnownReportDate();
+  if (!latestKnown) {
+    return null;
+  }
+
+  return addUtcDays(latestKnown, -CRON_OVERLAP_DAYS);
 }
 
 export async function syncCotReports(source = "manual"): Promise<SyncResult> {
@@ -64,9 +107,7 @@ export async function syncCotReports(source = "manual"): Promise<SyncResult> {
     const typedMeta = (marketMetaRows ?? []) as CotMarketMeta[];
 
     const activeSocrataKeys = new Set(
-      typedMeta
-        .map((m) => m.socrata_key)
-        .filter((v): v is string => Boolean(v))
+      typedMeta.map((m) => m.socrata_key).filter((v): v is string => Boolean(v))
     );
 
     const registrySocrataKeys = MARKETS
@@ -81,7 +122,7 @@ export async function syncCotReports(source = "manual"): Promise<SyncResult> {
       ? baseFetchKeys.filter((k) => ONLY_FETCH_KEYS.includes(k))
       : baseFetchKeys;
 
-    const fetchStartDate = null;
+    const fetchStartDate = await resolveFetchStartDate(source);
 
     const rawRows = await fetchRawCotData(fetchKeys, fetchStartDate);
     const transformed = transformCotRows(rawRows, typedMeta);
@@ -132,6 +173,7 @@ export async function syncCotReports(source = "manual"): Promise<SyncResult> {
           fetchKeysCount: fetchKeys.length,
           onlyFetchKeys: ONLY_FETCH_KEYS,
           upsertChunkSize: UPSERT_CHUNK_SIZE,
+          cronOverlapDays: CRON_OVERLAP_DAYS,
         },
       })
       .eq("id", runId);

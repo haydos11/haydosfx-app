@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { syncCotReports } from "@/lib/cot/pipeline/sync";
 import { syncCotMarketPrices } from "@/lib/cot/pipeline/sync-market-prices";
+import { rebuildRecentServing } from "@/lib/cot/pipeline/rebuild-recent-serving";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -25,18 +26,20 @@ export async function GET(req: NextRequest) {
   try {
     console.log("=== CRON START ===");
 
-    // 1. Sync COT reports (already efficient)
     const cotResult = await syncCotReports("cron");
-    console.log("COT sync complete");
+    console.log("[cron] COT sync complete", cotResult);
 
-    // 2. Sync ONLY recent prices (FAST)
     const priceResult = await syncCotMarketPrices("recent");
-    console.log("Price sync complete", priceResult);
+    console.log("[cron] Price sync complete", priceResult);
+
+    const servingResult = await rebuildRecentServing(35);
+    console.log("[cron] Serving rebuild complete", servingResult);
 
     return NextResponse.json({
       ok: true,
       cot: cotResult,
       prices: priceResult,
+      serving: servingResult,
     });
   } catch (error) {
     console.error("[cron/sync-cot] fatal:", error);
