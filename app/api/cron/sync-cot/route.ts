@@ -1,43 +1,38 @@
-import { NextRequest, NextResponse } from "next/server";
-import { runScheduledCotSync } from "@/lib/cot/pipeline/run-scheduled-cot-sync";
+import { NextResponse } from "next/server";
+import { syncCotReports } from "@/lib/cot/pipeline/sync";
+import { exec } from "child_process";
+import util from "util";
+
+const execAsync = util.promisify(exec);
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
 
-function isAuthorized(req: NextRequest): boolean {
-  const authHeader = req.headers.get("authorization");
-  if (authHeader === `Bearer ${process.env.CRON_SECRET}`) return true;
-
-  // Optional fallback for manual browser testing:
-  const url = new URL(req.url);
-  const key = url.searchParams.get("key");
-  return !!process.env.CRON_SECRET && key === process.env.CRON_SECRET;
-}
-
-export async function GET(req: NextRequest) {
-  if (!isAuthorized(req)) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
-
+export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const force = url.searchParams.get("force") === "1";
+    const secret = url.searchParams.get("key");
 
-    const result = await runScheduledCotSync({
-      force,
-      source: "vercel-cron",
+    if (secret !== process.env.CRON_SECRET) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    console.log("Starting COT sync...");
+
+    // 1. Sync reports
+    const cotResult = await syncCotReports("cron");
+    console.log("COT sync done:", cotResult);
+
+    // 2. Sync prices
+    console.log("Starting price sync...");
+    await execAsync("node scripts/sync-cot-market-prices.ts");
+    console.log("Price sync done");
+
+    return NextResponse.json({
+      ok: true,
+      cot: cotResult,
     });
-
-    return NextResponse.json(result, { status: result.ok ? 200 : 500 });
-  } catch (error) {
-    console.error("[cron/sync-cot] fatal:", error);
-
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+  } catch (err) {
+    console.error("Cron failed:", err);
+    return NextResponse.json({ error: "Cron failed" }, { status: 500 });
   }
 }
