@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
     const priceResult = await syncCotMarketPrices("recent");
     console.log("[cron] Price sync complete", priceResult);
 
-    const servingResult = await rebuildRecentServing(35);
+    const servingResult = await rebuildRecentServing();
     console.log("[cron] Serving rebuild complete", servingResult);
 
     return NextResponse.json({
