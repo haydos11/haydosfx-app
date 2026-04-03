@@ -15,9 +15,17 @@ type RecentRow = {
   large_spec_net: number;
   large_spec_long: number | null;
   large_spec_short: number | null;
+  large_spec_gross_contracts?: number | null;
 
   small_traders_net: number;
+  small_traders_long?: number | null;
+  small_traders_short?: number | null;
+  small_traders_gross_contracts?: number | null;
+
   commercials_net: number;
+  commercials_long?: number | null;
+  commercials_short?: number | null;
+  commercials_gross_contracts?: number | null;
 
   report_price?: number | null;
   release_price?: number | null;
@@ -31,6 +39,12 @@ type RecentRow = {
   large_spec_net_usd?: number | null;
   small_traders_net_usd?: number | null;
   commercials_net_usd?: number | null;
+
+  large_spec_gross_usd?: number | null;
+  small_traders_gross_usd?: number | null;
+  commercials_gross_usd?: number | null;
+
+  usd_per_contract?: number | null;
 
   d_large?: number;
   d_large_long?: number;

@@ -1,47 +1,124 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveMarket } from "@/lib/cot/markets";
+import { CONTRACT_SPECS } from "@/lib/cot/contracts";
+import { yahooCloseOn, inv } from "@/lib/pricing/yahoo";
 
-const MARKET_KEY_TO_DB_CODE: Record<string, string> = {
-  eur: "6E",
-  jpy: "6J",
-  gbp: "6B",
-  aud: "6A",
-  nzd: "6N",
-  cad: "6C",
-  chf: "6S",
-  mxn: "6M",
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-  gold: "XAU",
-  silver: "XAG",
-  copper: "HG",
+const CFTC_URL = "https://publicreporting.cftc.gov/resource/6dca-aqww.json";
 
-  wti: "CL",
-  brent: "BRN",
-  rbob: "RB",
-  ng: "NG",
+const FX_KEYS = new Set(["eur", "jpy", "gbp", "aud", "nzd", "cad", "chf", "mxn"]);
+const INVERT_IF = new Set<string>(["JPY=X", "CAD=X", "MXN=X"]);
 
-  corn: "ZC",
-  wheat: "ZW",
-  soy: "ZS",
-  sugar11: "SB",
-  coffee: "KC",
-  cocoa: "CC",
-  lc: "LE",
-  lh: "HE",
+type CftcRow = {
+  report_date_as_yyyy_mm_dd?: string;
+  market_and_exchange_names?: string;
+  contract_market_name?: string;
 
-  spx: "SPX",
-  ndx: "NDX",
-  djia: "DJI",
-  btc: "BTC",
+  noncomm_positions_long_all?: string | number | null;
+  noncomm_positions_short_all?: string | number | null;
+  comm_positions_long_all?: string | number | null;
+  comm_positions_short_all?: string | number | null;
+  nonrept_positions_long_all?: string | number | null;
+  nonrept_positions_short_all?: string | number | null;
+  open_interest_all?: string | number | null;
 };
 
-const FX_DB_CODES = new Set(["6E", "6J", "6B", "6A", "6N", "6C", "6S", "6M"]);
+type PriceYahoo = { kind: "yahoo"; symbol: string };
+type PriceFixedUSD = { kind: "fixedUSD" };
+type PriceKind = PriceYahoo | PriceFixedUSD;
+
+type ContractSpec = {
+  contractSize: number;
+  priceMultiplier?: number;
+  price: PriceKind;
+};
+
+type BiasKind = "bullish" | "bearish" | "neutral" | null;
+type SentimentKind =
+  | "increasing_bullish"
+  | "less_bullish"
+  | "flat_bullish"
+  | "increasing_bearish"
+  | "less_bearish"
+  | "flat_bearish"
+  | "neutral"
+  | null;
+
+type RecentRow = {
+  date: string;
+  open_interest: number | null;
+
+  large_spec_net: number;
+  large_spec_long: number | null;
+  large_spec_short: number | null;
+
+  small_traders_net: number;
+  small_traders_long: number | null;
+  small_traders_short: number | null;
+
+  commercials_net: number;
+  commercials_long: number | null;
+  commercials_short: number | null;
+
+  report_price: number | null;
+  release_price: number | null;
+
+  bias: BiasKind;
+  positioning: string | null;
+  move_pct_report_to_release: number | null;
+  price_direction: string | null;
+  reaction_type: string | null;
+
+  large_spec_net_usd: number | null;
+  small_traders_net_usd: number | null;
+  commercials_net_usd: number | null;
+
+  usd_per_contract: number | null;
+
+  d_large?: number;
+  d_large_long?: number;
+  d_large_short?: number;
+  d_small?: number;
+  d_comm?: number;
+  d_oi?: number;
+  d_large_usd?: number;
+  d_small_usd?: number;
+  d_comm_usd?: number;
+};
+
+function num(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function esc(s: string) {
+  return s.replace(/'/g, "''");
+}
+
+function isoDate(v: string) {
+  return String(v).slice(0, 10);
+}
+
+function addUtcDays(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function getReleaseDate(reportDate: string): string {
+  return addUtcDays(reportDate, 3);
+}
 
 function cutoffFor(range: string): string | null {
   const now = new Date();
 
-  switch (range) {
+  switch ((range || "").toLowerCase()) {
+    case "3m":
+      now.setUTCMonth(now.getUTCMonth() - 3);
+      return now.toISOString().slice(0, 10);
     case "1y":
       now.setUTCFullYear(now.getUTCFullYear() - 1);
       return now.toISOString().slice(0, 10);
@@ -63,16 +140,10 @@ function cutoffFor(range: string): string | null {
   }
 }
 
-function toNum(v: unknown): number | null {
-  if (v === null || v === undefined || v === "") return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-function biasFromNet(
+function structuralBiasFromNet(
   netUsd: number | null,
   netContracts: number | null
-): "bullish" | "bearish" | "neutral" | null {
+): BiasKind {
   const v = netUsd ?? netContracts;
   if (v == null) return null;
   if (v > 0) return "bullish";
@@ -80,18 +151,41 @@ function biasFromNet(
   return "neutral";
 }
 
-function isoDate(v: string): string {
-  return String(v).slice(0, 10);
+function classifySentiment(
+  structuralBias: BiasKind,
+  deltaNet: number | null | undefined
+): SentimentKind {
+  if (!structuralBias || structuralBias === "neutral") return "neutral";
+  if (deltaNet == null || !Number.isFinite(deltaNet) || deltaNet === 0) {
+    return structuralBias === "bullish" ? "flat_bullish" : "flat_bearish";
+  }
+
+  if (structuralBias === "bullish") {
+    return deltaNet > 0 ? "increasing_bullish" : "less_bullish";
+  }
+
+  return deltaNet < 0 ? "increasing_bearish" : "less_bearish";
 }
 
-function addUtcDays(dateStr: string, days: number): string {
-  const d = new Date(`${dateStr}T00:00:00.000Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function getReleaseDate(reportDate: string): string {
-  return addUtcDays(reportDate, 3);
+function sentimentLabel(sentiment: SentimentKind): string | null {
+  switch (sentiment) {
+    case "increasing_bullish":
+      return "Increasing Bullish";
+    case "less_bullish":
+      return "Less Bullish";
+    case "flat_bullish":
+      return "Flat Bullish";
+    case "increasing_bearish":
+      return "Increasing Bearish";
+    case "less_bearish":
+      return "Less Bearish";
+    case "flat_bearish":
+      return "Flat Bearish";
+    case "neutral":
+      return "Neutral";
+    default:
+      return null;
+  }
 }
 
 function calcMovePct(
@@ -118,259 +212,200 @@ function calcPriceDirection(movePct: number | null): string | null {
   return "flat";
 }
 
-function calcReactionType(
-  bias: "bullish" | "bearish" | "neutral" | null,
+function calcReactionTypeFromSentiment(
+  sentiment: SentimentKind,
   movePct: number | null
 ): string | null {
-  if (!bias || bias === "neutral" || movePct == null || movePct === 0) return null;
-  if (bias === "bullish") return movePct > 0 ? "confirmation" : "fade";
-  if (bias === "bearish") return movePct < 0 ? "confirmation" : "fade";
+  if (sentiment == null || sentiment === "neutral" || movePct == null || movePct === 0) {
+    return null;
+  }
+
+  const bullishImpulse =
+    sentiment === "increasing_bullish" ||
+    sentiment === "less_bearish" ||
+    sentiment === "flat_bullish";
+
+  const bearishImpulse =
+    sentiment === "increasing_bearish" ||
+    sentiment === "less_bullish" ||
+    sentiment === "flat_bearish";
+
+  if (bullishImpulse) {
+    return movePct > 0 ? "confirmation" : "fade";
+  }
+
+  if (bearishImpulse) {
+    return movePct < 0 ? "confirmation" : "fade";
+  }
+
   return null;
 }
 
-type UnifiedDbRow = {
-  market_code?: string | null;
-  report_date: string;
-  category: string | null;
-  price_symbol: string | null;
-  report_price: number | null;
-
-  long_noncommercial: number | null;
-  short_noncommercial: number | null;
-  net_noncommercial: number | null;
-
-  long_commercial: number | null;
-  short_commercial: number | null;
-  net_commercial: number | null;
-
-  long_nonreportable: number | null;
-  short_nonreportable: number | null;
-  net_nonreportable: number | null;
-
-  oi_total: number | null;
-
-  long_noncommercial_usd: number | null;
-  short_noncommercial_usd: number | null;
-  net_noncommercial_usd: number | null;
-
-  long_commercial_usd: number | null;
-  short_commercial_usd: number | null;
-  net_commercial_usd: number | null;
-
-  long_nonreportable_usd: number | null;
-  short_nonreportable_usd: number | null;
-  net_nonreportable_usd: number | null;
+type StrictSpec = {
+  longNames: string[];
+  shortNames: string[];
+  excludeLike?: string[];
 };
 
-type FxNotionalRow = {
-  report_date: string;
-  long_noncommercial_usd: number | null;
-  short_noncommercial_usd: number | null;
-  net_noncommercial_usd: number | null;
-  long_commercial_usd: number | null;
-  short_commercial_usd: number | null;
-  net_commercial_usd: number | null;
-  long_nonreportable_usd: number | null;
-  short_nonreportable_usd: number | null;
-  net_nonreportable_usd: number | null;
-};
+const STRICT_LIST: StrictSpec[] = [
+  {
+    longNames: ["EURO FX - CHICAGO MERCANTILE EXCHANGE"],
+    shortNames: ["EURO FX"],
+    excludeLike: ["E-MINI%", "E MICRO%", "E-MICRO%", "%/%"],
+  },
+  {
+    longNames: [
+      "NZ DOLLAR - CHICAGO MERCANTILE EXCHANGE",
+      "NEW ZEALAND DOLLAR - CHICAGO MERCANTILE EXCHANGE",
+    ],
+    shortNames: ["NZ DOLLAR", "NEW ZEALAND DOLLAR"],
+    excludeLike: ["E-MINI%", "E MICRO%", "E-MICRO%", "%/%"],
+  },
+];
 
-type FxReactionRow = {
-  report_date: string;
-  position_bias: string | null;
-  report_price: number | null;
-  release_price: number | null;
-  reaction_report_price: number | null;
-  reaction_release_price: number | null;
-  move_pct_report_to_release: number | null;
-  price_direction: string | null;
-  reaction_type: string | null;
-};
+function maybeStrictWhere(cftcName: string): string | undefined {
+  const upper = cftcName.toUpperCase().trim();
+  const spec = STRICT_LIST.find((s) =>
+    s.longNames.some((ln) => ln.toUpperCase() === upper)
+  );
+  if (!spec) return undefined;
 
-type PriceRow = {
-  market_code: string;
-  price_date: string;
-  close: number | null;
-};
-
-async function tryLoadLegacyRows(
-  supabase: ReturnType<typeof getSupabaseAdmin>,
-  dbCode: string,
-  startDate: string | null
-): Promise<{ rows: UnifiedDbRow[]; usedLegacy: boolean }> {
-  let query = supabase
-    .from("cot_all_usd_notional")
-    .select(`
-      market_code,
-      report_date,
-      category,
-      price_symbol,
-      report_price,
-      long_noncommercial,
-      short_noncommercial,
-      net_noncommercial,
-      long_commercial,
-      short_commercial,
-      net_commercial,
-      long_nonreportable,
-      short_nonreportable,
-      net_nonreportable,
-      oi_total,
-      long_noncommercial_usd,
-      short_noncommercial_usd,
-      net_noncommercial_usd,
-      long_commercial_usd,
-      short_commercial_usd,
-      net_commercial_usd,
-      long_nonreportable_usd,
-      short_nonreportable_usd,
-      net_nonreportable_usd
-    `)
-    .eq("market_code", dbCode)
-    .order("report_date", { ascending: true });
-
-  if (startDate) {
-    query = query.gte("report_date", startDate);
-  }
-
-  const { data, error } = await query;
-
-  if (!error) {
-    return { rows: (data ?? []) as UnifiedDbRow[], usedLegacy: true };
-  }
-
-  const msg = error.message || "";
-  const isMissingCompatView =
-    msg.includes("cot_all_usd_notional") ||
-    msg.includes("Could not find the table") ||
-    msg.includes("schema cache");
-
-  if (!isMissingCompatView) {
-    throw new Error(error.message);
-  }
-
-  return { rows: [], usedLegacy: false };
-}
-
-async function loadRowsFallback(
-  supabase: ReturnType<typeof getSupabaseAdmin>,
-  dbCode: string,
-  startDate: string | null,
-  isFx: boolean
-): Promise<UnifiedDbRow[]> {
-  let reportsQuery = supabase
-    .from("cot_reports")
-    .select(`
-      market_code,
-      report_date,
-      long_noncommercial,
-      short_noncommercial,
-      net_noncommercial,
-      long_commercial,
-      short_commercial,
-      net_commercial,
-      long_nonreportable,
-      short_nonreportable,
-      net_nonreportable,
-      oi_total
-    `)
-    .eq("market_code", dbCode)
-    .order("report_date", { ascending: true });
-
-  if (startDate) {
-    reportsQuery = reportsQuery.gte("report_date", startDate);
-  }
-
-  const { data: reportsData, error: reportsError } = await reportsQuery;
-  if (reportsError) {
-    throw new Error(`cot_reports fallback failed: ${reportsError.message}`);
-  }
-
-  const baseRows = ((reportsData ?? []) as Partial<UnifiedDbRow>[]).map((row) => ({
-    market_code: row.market_code ?? dbCode,
-    report_date: row.report_date ?? "",
-    category: null,
-    price_symbol: null,
-    report_price: null,
-
-    long_noncommercial: toNum(row.long_noncommercial),
-    short_noncommercial: toNum(row.short_noncommercial),
-    net_noncommercial: toNum(row.net_noncommercial),
-
-    long_commercial: toNum(row.long_commercial),
-    short_commercial: toNum(row.short_commercial),
-    net_commercial: toNum(row.net_commercial),
-
-    long_nonreportable: toNum(row.long_nonreportable),
-    short_nonreportable: toNum(row.short_nonreportable),
-    net_nonreportable: toNum(row.net_nonreportable),
-
-    oi_total: toNum(row.oi_total),
-
-    long_noncommercial_usd: null,
-    short_noncommercial_usd: null,
-    net_noncommercial_usd: null,
-
-    long_commercial_usd: null,
-    short_commercial_usd: null,
-    net_commercial_usd: null,
-
-    long_nonreportable_usd: null,
-    short_nonreportable_usd: null,
-    net_nonreportable_usd: null,
-  })) satisfies UnifiedDbRow[];
-
-  if (!isFx || !baseRows.length) {
-    return baseRows;
-  }
-
-  let fxNotionalQuery = supabase
-    .from("cot_fx_usd_notional")
-    .select(`
-      report_date,
-      long_noncommercial_usd,
-      short_noncommercial_usd,
-      net_noncommercial_usd,
-      long_commercial_usd,
-      short_commercial_usd,
-      net_commercial_usd,
-      long_nonreportable_usd,
-      short_nonreportable_usd,
-      net_nonreportable_usd
-    `)
-    .eq("market_code", dbCode)
-    .order("report_date", { ascending: true });
-
-  if (startDate) {
-    fxNotionalQuery = fxNotionalQuery.gte("report_date", startDate);
-  }
-
-  const { data: fxNotionalData, error: fxNotionalError } = await fxNotionalQuery;
-  if (fxNotionalError) {
-    throw new Error(`cot_fx_usd_notional fallback failed: ${fxNotionalError.message}`);
-  }
-
-  const fxMap = new Map<string, FxNotionalRow>(
-    ((fxNotionalData ?? []) as FxNotionalRow[]).map((r) => [isoDate(r.report_date), r])
+  const parts: string[] = [];
+  parts.push(
+    "(" +
+      spec.longNames
+        .map((ln) => `UPPER(market_and_exchange_names) = '${esc(ln).toUpperCase()}'`)
+        .join(" OR ") +
+      ")"
+  );
+  parts.push(
+    "(" +
+      ["contract_market_name IS NULL"]
+        .concat(
+          spec.shortNames.map(
+            (sn) => `UPPER(contract_market_name) = '${esc(sn).toUpperCase()}'`
+          )
+        )
+        .join(" OR ") +
+      ")"
   );
 
-  return baseRows.map((row) => {
-    const fx = fxMap.get(isoDate(row.report_date));
-    return {
-      ...row,
-      long_noncommercial_usd: toNum(fx?.long_noncommercial_usd),
-      short_noncommercial_usd: toNum(fx?.short_noncommercial_usd),
-      net_noncommercial_usd: toNum(fx?.net_noncommercial_usd),
+  if (spec.excludeLike?.length) {
+    parts.push(
+      spec.excludeLike
+        .map(
+          (p) =>
+            `NOT (UPPER(contract_market_name) LIKE '${esc(p).toUpperCase()}' OR UPPER(market_and_exchange_names) LIKE '${esc(p).toUpperCase()}')`
+        )
+        .join(" AND ")
+    );
+  }
 
-      long_commercial_usd: toNum(fx?.long_commercial_usd),
-      short_commercial_usd: toNum(fx?.short_commercial_usd),
-      net_commercial_usd: toNum(fx?.net_commercial_usd),
+  return parts.join(" AND ");
+}
 
-      long_nonreportable_usd: toNum(fx?.long_nonreportable_usd),
-      short_nonreportable_usd: toNum(fx?.short_nonreportable_usd),
-      net_nonreportable_usd: toNum(fx?.net_nonreportable_usd),
-    };
+function broadWhere(cftcName: string) {
+  const longName = cftcName;
+  const baseShort = longName.split(" - ")[0];
+  const shortCandidates = Array.from(
+    new Set([baseShort, baseShort.replace(/\s+STERLING\b/i, "")])
+  );
+
+  return (
+    "(" +
+    shortCandidates
+      .map(
+        (s) =>
+          `(contract_market_name = '${esc(s)}' OR UPPER(contract_market_name) LIKE '${esc(
+            s
+          ).toUpperCase()}%')`
+      )
+      .join(" OR ") +
+    ` OR UPPER(market_and_exchange_names) LIKE '${esc(longName).toUpperCase()}%'` +
+    ") AND " +
+    [
+      "UPPER(contract_market_name) NOT LIKE '%E-MINI%'",
+      "UPPER(market_and_exchange_names) NOT LIKE '%E-MINI%'",
+      "UPPER(contract_market_name) NOT LIKE '%E MICRO%'",
+      "UPPER(contract_market_name) NOT LIKE '%E-MICRO%'",
+      "UPPER(market_and_exchange_names) NOT LIKE '%/%'",
+      "UPPER(contract_market_name) NOT LIKE '%/%'",
+    ].join(" AND ")
+  );
+}
+
+async function fetchHistoricalRows(
+  cftcName: string,
+  startDate: string | null
+): Promise<CftcRow[]> {
+  const select = [
+    "report_date_as_yyyy_mm_dd",
+    "market_and_exchange_names",
+    "contract_market_name",
+    "noncomm_positions_long_all",
+    "noncomm_positions_short_all",
+    "comm_positions_long_all",
+    "comm_positions_short_all",
+    "nonrept_positions_long_all",
+    "nonrept_positions_short_all",
+    "open_interest_all",
+  ].join(", ");
+
+  const strictWhere = maybeStrictWhere(cftcName);
+  const baseWhere = strictWhere ?? broadWhere(cftcName);
+  const where = startDate
+    ? `(${baseWhere}) AND report_date_as_yyyy_mm_dd >= '${esc(startDate)}'`
+    : baseWhere;
+
+  const url =
+    `${CFTC_URL}?` +
+    `$select=${encodeURIComponent(select)}` +
+    `&$where=${encodeURIComponent(where)}` +
+    `&$order=${encodeURIComponent("report_date_as_yyyy_mm_dd ASC")}` +
+    `&$limit=5000`;
+
+  const res = await fetch(url, {
+    headers: { Accept: "application/json" },
+    cache: "no-store",
   });
+
+  if (!res.ok) {
+    throw new Error(`CFTC ${res.status}: ${await res.text()}`);
+  }
+
+  return (await res.json()) as CftcRow[];
+}
+
+function buildPriceCacheKey(spec: ContractSpec, date: string): string {
+  if (spec.price.kind === "fixedUSD") return `fixedUSD:${date}`;
+  return `${spec.price.symbol}:${date}`;
+}
+
+async function getUsdPerUnitCached(
+  spec: ContractSpec,
+  date: string,
+  cache: Map<string, number | null>
+): Promise<number | null> {
+  const key = buildPriceCacheKey(spec, date);
+
+  if (cache.has(key)) {
+    return cache.get(key) ?? null;
+  }
+
+  let value: number | null = null;
+
+  if (spec.price.kind === "fixedUSD") {
+    value = 1;
+  } else {
+    let px = await yahooCloseOn(spec.price.symbol, date);
+    if (px != null && INVERT_IF.has(spec.price.symbol)) {
+      px = inv(px);
+    }
+    value = px ?? null;
+  }
+
+  cache.set(key, value);
+  return value;
 }
 
 export async function GET(
@@ -385,92 +420,27 @@ export async function GET(
     }
 
     const info = resolveMarket(market);
-
     if (!info) {
       return NextResponse.json({ error: "Unknown market" }, { status: 404 });
     }
 
-    const dbCode = MARKET_KEY_TO_DB_CODE[info.key];
-    if (!dbCode) {
-      return NextResponse.json({ error: "No DB mapping for market" }, { status: 404 });
-    }
-
-    const isFx = FX_DB_CODES.has(dbCode);
     const range = (req.nextUrl.searchParams.get("range") ?? "5y").toLowerCase();
     const startDate = cutoffFor(range);
 
-    const supabase = getSupabaseAdmin();
+    const spec = (CONTRACT_SPECS as Record<string, ContractSpec | undefined>)[info.key];
+    if (!spec) {
+      return NextResponse.json({ error: `No contract spec for ${info.key}` }, { status: 404 });
+    }
 
-    const legacyAttempt = await tryLoadLegacyRows(supabase, dbCode, startDate);
-    const rows =
-      legacyAttempt.usedLegacy
-        ? legacyAttempt.rows
-        : await loadRowsFallback(supabase, dbCode, startDate, isFx);
+    const rows = await fetchHistoricalRows(info.cftcName, startDate);
 
     if (!rows.length) {
       return NextResponse.json({ error: "No rows found" }, { status: 404 });
     }
 
-    let reactionMap = new Map<string, FxReactionRow>();
-
-    if (isFx) {
-      let reactionQuery = supabase
-        .from("cot_fx_reaction_v3_mv")
-        .select(`
-          report_date,
-          position_bias,
-          report_price,
-          release_price,
-          reaction_report_price,
-          reaction_release_price,
-          move_pct_report_to_release,
-          price_direction,
-          reaction_type
-        `)
-        .eq("market_code", dbCode)
-        .order("report_date", { ascending: true });
-
-      if (startDate) {
-        reactionQuery = reactionQuery.gte("report_date", startDate);
-      }
-
-      const { data: reactionRows, error: reactionError } = await reactionQuery;
-      if (reactionError) throw new Error(reactionError.message);
-
-      reactionMap = new Map(
-        ((reactionRows ?? []) as FxReactionRow[]).map((r) => [isoDate(r.report_date), r])
-      );
-    }
-
-    let nonFxPriceMap = new Map<string, number | null>();
-
-    if (!isFx) {
-      const releaseDates = rows.map((r) => getReleaseDate(isoDate(r.report_date)));
-      const reportDates = rows.map((r) => isoDate(r.report_date));
-      const allDates = [...reportDates, ...releaseDates].sort();
-
-      const minDate = allDates[0] ?? null;
-      const maxDate = allDates.at(-1) ?? null;
-
-      if (minDate && maxDate) {
-        const { data: priceRows, error: priceError } = await supabase
-          .from("cot_market_prices_daily")
-          .select("market_code, price_date, close")
-          .eq("market_code", dbCode)
-          .gte("price_date", minDate)
-          .lte("price_date", maxDate)
-          .order("price_date", { ascending: true });
-
-        if (priceError) throw new Error(priceError.message);
-
-        for (const row of (priceRows ?? []) as PriceRow[]) {
-          nonFxPriceMap.set(
-            `${row.market_code}__${isoDate(row.price_date)}`,
-            toNum(row.close)
-          );
-        }
-      }
-    }
+    const isFx = FX_KEYS.has(info.key);
+    const pm = spec.priceMultiplier ?? 1;
+    const priceCache = new Map<string, number | null>();
 
     const dates: string[] = [];
     const large: number[] = [];
@@ -494,234 +464,199 @@ export async function GET(
     const price_direction: (string | null)[] = [];
     const reaction: (string | null)[] = [];
 
-    let price_symbol: string | null = null;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const prevRow = i > 0 ? rows[i - 1] : null;
 
-    for (const row of rows) {
-      const rowDate = isoDate(row.report_date);
+      const date = isoDate(row.report_date_as_yyyy_mm_dd ?? "");
+      if (!date) continue;
 
-      const lcL = toNum(row.long_noncommercial) ?? 0;
-      const lcS = toNum(row.short_noncommercial) ?? 0;
-      const cmL = toNum(row.long_commercial) ?? 0;
-      const cmS = toNum(row.short_commercial) ?? 0;
-      const smL = toNum(row.long_nonreportable) ?? 0;
-      const smS = toNum(row.short_nonreportable) ?? 0;
+      const ncLong = num(row.noncomm_positions_long_all) ?? 0;
+      const ncShort = num(row.noncomm_positions_short_all) ?? 0;
+      const cmLong = num(row.comm_positions_long_all) ?? 0;
+      const cmShort = num(row.comm_positions_short_all) ?? 0;
+      const smLong = num(row.nonrept_positions_long_all) ?? 0;
+      const smShort = num(row.nonrept_positions_short_all) ?? 0;
 
-      const netNc = toNum(row.net_noncommercial) ?? lcL - lcS;
-      const netSm = toNum(row.net_nonreportable) ?? smL - smS;
-      const netCm = toNum(row.net_commercial) ?? cmL - cmS;
-      const netNcUsd = toNum(row.net_noncommercial_usd);
+      const ncNet = ncLong - ncShort;
+      const cmNet = cmLong - cmShort;
+      const smNet = smLong - smShort;
 
-      dates.push(rowDate);
-      large.push(netNc);
-      small.push(netSm);
-      comm.push(netCm);
+      const prevNcNet =
+        prevRow == null
+          ? null
+          : (num(prevRow.noncomm_positions_long_all) ?? 0) -
+            (num(prevRow.noncomm_positions_short_all) ?? 0);
 
-      ls_large.push(lcS !== 0 ? lcL / lcS : Number.NaN);
-      ls_small.push(smS !== 0 ? smL / smS : Number.NaN);
-      ls_comm.push(cmS !== 0 ? cmL / cmS : Number.NaN);
+      const dLarge = prevNcNet == null ? null : ncNet - prevNcNet;
 
-      open_interest.push(toNum(row.oi_total));
+      const releaseDate = getReleaseDate(date);
 
-      large_usd.push(netNcUsd);
-      small_usd.push(toNum(row.net_nonreportable_usd));
-      comm_usd.push(toNum(row.net_commercial_usd));
+      const pxReport = await getUsdPerUnitCached(spec, date, priceCache);
+      const pxRelease = await getUsdPerUnitCached(spec, releaseDate, priceCache);
 
-      if (!price_symbol && row.price_symbol) {
-        price_symbol = row.price_symbol;
-      }
+      const ncUsd = pxReport == null ? null : ncNet * spec.contractSize * pm * pxReport;
+      const cmUsd = pxReport == null ? null : cmNet * spec.contractSize * pm * pxReport;
+      const smUsd = pxReport == null ? null : smNet * spec.contractSize * pm * pxReport;
 
-      const baseBias = biasFromNet(netNcUsd, netNc);
+      const structuralBias = structuralBiasFromNet(ncUsd, ncNet);
+      const sentiment = classifySentiment(structuralBias, dLarge);
+      const mv = calcMovePct(pxReport, pxRelease);
+      const dir = calcPriceDirection(mv);
+      const rxn = calcReactionTypeFromSentiment(sentiment, mv);
 
-      if (isFx) {
-        const rxn = reactionMap.get(rowDate);
+      dates.push(date);
+      large.push(ncNet);
+      small.push(smNet);
+      comm.push(cmNet);
 
-        const fxReportPrice = toNum(rxn?.reaction_report_price);
-        const fxReleasePrice = toNum(rxn?.reaction_release_price);
-        const fxMovePct = calcMovePct(fxReportPrice, fxReleasePrice);
-        const fxDirection = calcPriceDirection(fxMovePct);
-        const fxBias =
-          (rxn?.position_bias as "bullish" | "bearish" | "neutral" | null) ?? baseBias;
-        const fxReaction = calcReactionType(fxBias, fxMovePct);
+      ls_large.push(ncShort !== 0 ? ncLong / ncShort : Number.NaN);
+      ls_small.push(smShort !== 0 ? smLong / smShort : Number.NaN);
+      ls_comm.push(cmShort !== 0 ? cmLong / cmShort : Number.NaN);
+      open_interest.push(num(row.open_interest_all));
 
-        report_price.push(fxReportPrice);
-        release_price.push(fxReleasePrice);
-        bias.push(fxBias);
-        move_pct.push(fxMovePct);
-        price_direction.push(fxDirection);
-        reaction.push(fxReaction);
-        positioning.push(null);
-      } else {
-        const releaseDate = getReleaseDate(rowDate);
+      report_price.push(pxReport);
+      release_price.push(pxRelease);
 
-        const computedReportPrice =
-          nonFxPriceMap.get(`${dbCode}__${rowDate}`) ?? toNum(row.report_price);
+      large_usd.push(ncUsd);
+      small_usd.push(smUsd);
+      comm_usd.push(cmUsd);
 
-        const computedReleasePrice =
-          nonFxPriceMap.get(`${dbCode}__${releaseDate}`) ?? null;
-
-        const computedMovePct = calcMovePct(computedReportPrice, computedReleasePrice);
-        const computedDirection = calcPriceDirection(computedMovePct);
-        const computedReaction = calcReactionType(baseBias, computedMovePct);
-
-        report_price.push(computedReportPrice);
-        release_price.push(computedReleasePrice);
-        bias.push(baseBias);
-        move_pct.push(computedMovePct);
-        price_direction.push(computedDirection);
-        reaction.push(computedReaction);
-        positioning.push(null);
-      }
+      bias.push(structuralBias);
+      positioning.push(sentimentLabel(sentiment));
+      move_pct.push(mv);
+      price_direction.push(dir);
+      reaction.push(rxn);
     }
 
-    const recentBase = rows
-      .slice()
-      .reverse()
-      .slice(0, 12)
-      .map((row) => {
-        const rowDate = isoDate(row.report_date);
+    const recentBase = rows.slice().reverse().slice(0, 12);
+    const recent: RecentRow[] = [];
 
-        const netNc = toNum(row.net_noncommercial) ?? 0;
-        const netNcUsd = toNum(row.net_noncommercial_usd);
-        const baseBias = biasFromNet(netNcUsd, netNc);
+    for (let i = 0; i < recentBase.length; i++) {
+      const row = recentBase[i];
+      const rowDate = isoDate(row.report_date_as_yyyy_mm_dd ?? "");
 
-        if (isFx) {
-          const rxn = reactionMap.get(rowDate);
+      const ncLong = num(row.noncomm_positions_long_all) ?? 0;
+      const ncShort = num(row.noncomm_positions_short_all) ?? 0;
+      const cmLong = num(row.comm_positions_long_all) ?? 0;
+      const cmShort = num(row.comm_positions_short_all) ?? 0;
+      const smLong = num(row.nonrept_positions_long_all) ?? 0;
+      const smShort = num(row.nonrept_positions_short_all) ?? 0;
 
-          const fxReportPrice = toNum(rxn?.reaction_report_price);
-          const fxReleasePrice = toNum(rxn?.reaction_release_price);
-          const fxMovePct = calcMovePct(fxReportPrice, fxReleasePrice);
-          const fxDirection = calcPriceDirection(fxMovePct);
-          const fxBias =
-            (rxn?.position_bias as "bullish" | "bearish" | "neutral" | null) ?? baseBias;
-          const fxReaction = calcReactionType(fxBias, fxMovePct);
+      const ncNet = ncLong - ncShort;
+      const cmNet = cmLong - cmShort;
+      const smNet = smLong - smShort;
 
-          return {
-            date: rowDate,
-            open_interest: toNum(row.oi_total),
+      const pxReport = await getUsdPerUnitCached(spec, rowDate, priceCache);
+      const pxRelease = await getUsdPerUnitCached(
+        spec,
+        getReleaseDate(rowDate),
+        priceCache
+      );
 
-            large_spec_net: netNc,
-            large_spec_long: toNum(row.long_noncommercial),
-            large_spec_short: toNum(row.short_noncommercial),
+      const ncUsd = pxReport == null ? null : ncNet * spec.contractSize * pm * pxReport;
+      const cmUsd = pxReport == null ? null : cmNet * spec.contractSize * pm * pxReport;
+      const smUsd = pxReport == null ? null : smNet * spec.contractSize * pm * pxReport;
 
-            small_traders_net: toNum(row.net_nonreportable) ?? 0,
-            commercials_net: toNum(row.net_commercial) ?? 0,
-
-            report_price: fxReportPrice,
-            release_price: fxReleasePrice,
-
-            bias: fxBias,
-            move_pct_report_to_release: fxMovePct,
-            price_direction: fxDirection,
-            reaction_type: fxReaction,
-
-            large_spec_net_usd: netNcUsd,
-            small_traders_net_usd: toNum(row.net_nonreportable_usd),
-            commercials_net_usd: toNum(row.net_commercial_usd),
-          };
-        }
-
-        const releaseDate = getReleaseDate(rowDate);
-
-        const computedReportPrice =
-          nonFxPriceMap.get(`${dbCode}__${rowDate}`) ?? toNum(row.report_price);
-
-        const computedReleasePrice =
-          nonFxPriceMap.get(`${dbCode}__${releaseDate}`) ?? null;
-
-        const computedMovePct = calcMovePct(computedReportPrice, computedReleasePrice);
-        const computedDirection = calcPriceDirection(computedMovePct);
-        const computedReaction = calcReactionType(baseBias, computedMovePct);
-
-        return {
-          date: rowDate,
-          open_interest: toNum(row.oi_total),
-
-          large_spec_net: netNc,
-          large_spec_long: toNum(row.long_noncommercial),
-          large_spec_short: toNum(row.short_noncommercial),
-
-          small_traders_net: toNum(row.net_nonreportable) ?? 0,
-          commercials_net: toNum(row.net_commercial) ?? 0,
-
-          report_price: computedReportPrice,
-          release_price: computedReleasePrice,
-
-          bias: baseBias,
-          move_pct_report_to_release: computedMovePct,
-          price_direction: computedDirection,
-          reaction_type: computedReaction,
-
-          large_spec_net_usd: netNcUsd,
-          small_traders_net_usd: toNum(row.net_nonreportable_usd),
-          commercials_net_usd: toNum(row.net_commercial_usd),
-        };
-      });
-
-    const recent = recentBase.map((r, i) => {
       const next = recentBase[i + 1];
-      const dLarge = next ? r.large_spec_net - next.large_spec_net : undefined;
+      const nextNcNet =
+        next == null
+          ? null
+          : (num(next.noncomm_positions_long_all) ?? 0) -
+            (num(next.noncomm_positions_short_all) ?? 0);
 
-      let positioningLabel: string | null = null;
-      if (r.bias === "bullish") {
-        positioningLabel =
-          dLarge == null || dLarge === 0
-            ? "Flat Bullish"
-            : dLarge > 0
-            ? "Increasing Bullish"
-            : "Less Bullish";
-      } else if (r.bias === "bearish") {
-        positioningLabel =
-          dLarge == null || dLarge === 0
-            ? "Flat Bearish"
-            : dLarge < 0
-            ? "Increasing Bearish"
-            : "Less Bearish";
-      } else if (r.bias === "neutral") {
-        positioningLabel = "Neutral";
-      }
+      const dLarge = nextNcNet == null ? undefined : ncNet - nextNcNet;
 
-      return {
-        ...r,
-        positioning: positioningLabel,
-        d_large: dLarge,
+      const structuralBias = structuralBiasFromNet(ncUsd, ncNet);
+      const sentiment = classifySentiment(structuralBias, dLarge);
+      const mv = calcMovePct(pxReport, pxRelease);
+      const dir = calcPriceDirection(mv);
+      const rxn = calcReactionTypeFromSentiment(sentiment, mv);
+
+      recent.push({
+        date: rowDate,
+        open_interest: num(row.open_interest_all),
+
+        large_spec_net: ncNet,
+        large_spec_long: ncLong,
+        large_spec_short: ncShort,
+
+        small_traders_net: smNet,
+        small_traders_long: smLong,
+        small_traders_short: smShort,
+
+        commercials_net: cmNet,
+        commercials_long: cmLong,
+        commercials_short: cmShort,
+
+        report_price: pxReport,
+        release_price: pxRelease,
+
+        bias: structuralBias,
+        positioning: sentimentLabel(sentiment),
+        move_pct_report_to_release: mv,
+        price_direction: dir,
+        reaction_type: rxn,
+
+        large_spec_net_usd: ncUsd,
+        small_traders_net_usd: smUsd,
+        commercials_net_usd: cmUsd,
+
+        usd_per_contract: pxReport == null ? null : spec.contractSize * pm * pxReport,
+
+        d_large:
+          next == null
+            ? undefined
+            : ncNet -
+              ((num(next.noncomm_positions_long_all) ?? 0) -
+                (num(next.noncomm_positions_short_all) ?? 0)),
         d_large_long:
-          next &&
-          r.large_spec_long != null &&
-          next.large_spec_long != null
-            ? r.large_spec_long - next.large_spec_long
-            : undefined,
+          next == null
+            ? undefined
+            : ncLong - (num(next.noncomm_positions_long_all) ?? 0),
         d_large_short:
-          next &&
-          r.large_spec_short != null &&
-          next.large_spec_short != null
-            ? r.large_spec_short - next.large_spec_short
-            : undefined,
-        d_small: next ? r.small_traders_net - next.small_traders_net : undefined,
-        d_comm: next ? r.commercials_net - next.commercials_net : undefined,
+          next == null
+            ? undefined
+            : ncShort - (num(next.noncomm_positions_short_all) ?? 0),
+        d_small:
+          next == null
+            ? undefined
+            : smNet -
+              ((num(next.nonrept_positions_long_all) ?? 0) -
+                (num(next.nonrept_positions_short_all) ?? 0)),
+        d_comm:
+          next == null
+            ? undefined
+            : cmNet -
+              ((num(next.comm_positions_long_all) ?? 0) -
+                (num(next.comm_positions_short_all) ?? 0)),
         d_oi:
-          next && r.open_interest != null && next.open_interest != null
-            ? r.open_interest - next.open_interest
-            : undefined,
-        d_large_usd:
-          next &&
-          r.large_spec_net_usd != null &&
-          next.large_spec_net_usd != null
-            ? r.large_spec_net_usd - next.large_spec_net_usd
-            : undefined,
-        d_small_usd:
-          next &&
-          r.small_traders_net_usd != null &&
-          next.small_traders_net_usd != null
-            ? r.small_traders_net_usd - next.small_traders_net_usd
-            : undefined,
-        d_comm_usd:
-          next &&
-          r.commercials_net_usd != null &&
-          next.commercials_net_usd != null
-            ? r.commercials_net_usd - next.commercials_net_usd
-            : undefined,
-      };
-    });
+          next == null
+            ? undefined
+            : (num(row.open_interest_all) ?? 0) - (num(next.open_interest_all) ?? 0),
+        d_large_usd: undefined,
+        d_small_usd: undefined,
+        d_comm_usd: undefined,
+      });
+    }
+
+    for (let i = 0; i < recent.length - 1; i++) {
+      const curr = recent[i];
+      const prev = recent[i + 1];
+
+      curr.d_large_usd =
+        curr.large_spec_net_usd != null && prev.large_spec_net_usd != null
+          ? curr.large_spec_net_usd - prev.large_spec_net_usd
+          : undefined;
+      curr.d_small_usd =
+        curr.small_traders_net_usd != null && prev.small_traders_net_usd != null
+          ? curr.small_traders_net_usd - prev.small_traders_net_usd
+          : undefined;
+      curr.d_comm_usd =
+        curr.commercials_net_usd != null && prev.commercials_net_usd != null
+          ? curr.commercials_net_usd - prev.commercials_net_usd
+          : undefined;
+    }
 
     const points = dates.map((date, i) => ({
       date,
@@ -734,10 +669,10 @@ export async function GET(
         key: info.key,
         code: info.code,
         name: info.name,
-        dbCode,
+        dbCode: info.code,
         isFx,
-        fx_symbol: isFx ? price_symbol : null,
-        price_symbol,
+        fx_symbol: isFx && spec.price.kind === "yahoo" ? spec.price.symbol : null,
+        price_symbol: spec.price.kind === "yahoo" ? spec.price.symbol : "USD",
       },
       dates,
       large,
@@ -747,7 +682,6 @@ export async function GET(
       ls_small,
       ls_comm,
       open_interest,
-
       report_price,
       release_price,
       large_usd,
@@ -758,7 +692,6 @@ export async function GET(
       move_pct,
       price_direction,
       reaction,
-
       recent,
       updated: new Date().toISOString(),
       range: {
@@ -766,6 +699,7 @@ export async function GET(
         to: dates[dates.length - 1] ?? null,
         label: range,
       },
+      source: "Socrata+Yahoo",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";

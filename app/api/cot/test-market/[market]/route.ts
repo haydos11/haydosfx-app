@@ -74,6 +74,27 @@ function isoDate(v: string): string {
   return String(v).slice(0, 10);
 }
 
+function safeDivide(a: number | null, b: number | null): number | null {
+  if (a == null || b == null || !Number.isFinite(a) || !Number.isFinite(b) || b === 0) {
+    return null;
+  }
+  const out = a / b;
+  return Number.isFinite(out) ? out : null;
+}
+
+function rocPct(curr: number | null, prev: number | null): number | null {
+  if (
+    curr == null ||
+    prev == null ||
+    !Number.isFinite(curr) ||
+    !Number.isFinite(prev) ||
+    prev === 0
+  ) {
+    return null;
+  }
+  return ((curr - prev) / Math.abs(prev)) * 100;
+}
+
 type ServingRow = {
   market_code: string;
   market_name: string;
@@ -136,7 +157,7 @@ export async function GET(
   try {
     const gate = await requireApiPremium();
     if (!gate.ok) return gate.response;
-    
+
     const { market } = await context.params;
 
     if (!market) {
@@ -230,6 +251,14 @@ export async function GET(
       const netSm = toNum(row.net_nonreportable) ?? smL - smS;
       const netCm = toNum(row.net_commercial) ?? cmL - cmS;
 
+      const largeUsdExposure = toNum(row.usd_signed_exposure);
+      const usdPerContract = safeDivide(largeUsdExposure, netNc);
+
+      const smallUsdExposure =
+        usdPerContract != null ? netSm * usdPerContract : null;
+      const commUsdExposure =
+        usdPerContract != null ? netCm * usdPerContract : null;
+
       dates.push(rowDate);
       large.push(netNc);
       small.push(netSm);
@@ -246,9 +275,9 @@ export async function GET(
       indexed_report_price.push(toNum(row.report_price));
       indexed_release_price.push(toNum(row.release_price));
 
-      large_usd.push(toNum(row.usd_signed_exposure));
-      small_usd.push(null);
-      comm_usd.push(null);
+      large_usd.push(largeUsdExposure);
+      small_usd.push(smallUsdExposure);
+      comm_usd.push(commUsdExposure);
 
       bias.push(row.position_bias);
       move_pct.push(toNum(row.reaction_move_pct));
@@ -261,48 +290,177 @@ export async function GET(
       .slice()
       .reverse()
       .slice(0, recentCount)
-      .map((row) => ({
-        date: isoDate(row.report_date),
-        release_date: row.release_date ? isoDate(row.release_date) : null,
-        next_report_date: row.next_report_date ? isoDate(row.next_report_date) : null,
+      .map((row, idx, arr) => {
+        const prevRow = arr[idx + 1] ?? null;
 
-        open_interest: toNum(row.oi_total),
+        const netNc = toNum(row.net_noncommercial);
+        const netSm = toNum(row.net_nonreportable) ?? 0;
+        const netCm = toNum(row.net_commercial) ?? 0;
 
-        large_spec_net: toNum(row.net_noncommercial) ?? 0,
-        large_spec_long: toNum(row.long_noncommercial),
-        large_spec_short: toNum(row.short_noncommercial),
+        const currLargeUsdExposure = toNum(row.usd_signed_exposure);
+        const currUsdPerContract = safeDivide(currLargeUsdExposure, netNc);
 
-        small_traders_net: toNum(row.net_nonreportable) ?? 0,
-        commercials_net: toNum(row.net_commercial) ?? 0,
+        const prevNetNc = prevRow ? toNum(prevRow.net_noncommercial) : null;
+        const prevLargeUsdExposure = prevRow ? toNum(prevRow.usd_signed_exposure) : null;
+        const prevUsdPerContract = safeDivide(prevLargeUsdExposure, prevNetNc);
 
-        report_price: toNum(row.report_price),
-        release_price: toNum(row.release_price),
-        next_report_price: toNum(row.next_report_price),
+        const smL = toNum(row.long_nonreportable);
+        const smS = toNum(row.short_nonreportable);
+        const cmL = toNum(row.long_commercial);
+        const cmS = toNum(row.short_commercial);
 
-        indexed_report_price: toNum(row.report_price),
-        indexed_release_price: toNum(row.release_price),
+        const prevSmL = prevRow ? toNum(prevRow.long_nonreportable) : null;
+        const prevSmS = prevRow ? toNum(prevRow.short_nonreportable) : null;
+        const prevCmL = prevRow ? toNum(prevRow.long_commercial) : null;
+        const prevCmS = prevRow ? toNum(prevRow.short_commercial) : null;
 
-        bias: row.position_bias,
-        positioning: row.position_trend,
+        const smallGrossContracts = (smL ?? 0) + (smS ?? 0);
+        const commercialsGrossContracts = (cmL ?? 0) + (cmS ?? 0);
+        const largeGrossContracts =
+          (toNum(row.long_noncommercial) ?? 0) + (toNum(row.short_noncommercial) ?? 0);
 
-        move_pct_report_to_release: toNum(row.reaction_move_pct),
-        move_pct_release_to_next_report: toNum(row.release_to_next_report_move_pct),
-        move_pct_report_to_next_report: toNum(row.report_to_next_report_move_pct),
+        const prevSmallGrossContracts =
+          (prevSmL ?? 0) + (prevSmS ?? 0);
+        const prevCommercialsGrossContracts =
+          (prevCmL ?? 0) + (prevCmS ?? 0);
 
-        price_direction: row.reaction_direction,
-        reaction_type: row.reaction_type,
+        const smallUsdExposure =
+          currUsdPerContract != null ? netSm * currUsdPerContract : null;
+        const commercialsUsdExposure =
+          currUsdPerContract != null ? netCm * currUsdPerContract : null;
 
-        large_spec_net_usd: toNum(row.usd_signed_exposure),
-        small_traders_net_usd: null,
-        commercials_net_usd: null,
+        const dSmall = toNum(row.d_net_nonreportable);
+        const dComm = toNum(row.d_net_commercial);
+        const dLarge = toNum(row.d_net_noncommercial);
 
-        d_large: toNum(row.d_net_noncommercial),
-        d_large_long: toNum(row.d_long_noncommercial),
-        d_large_short: toNum(row.d_short_noncommercial),
-        d_small: toNum(row.d_net_nonreportable),
-        d_comm: toNum(row.d_net_commercial),
-        d_oi: toNum(row.d_oi_total),
-      }));
+        const dSmallUsd =
+          currUsdPerContract != null && dSmall != null ? dSmall * currUsdPerContract : null;
+        const dCommUsd =
+          currUsdPerContract != null && dComm != null ? dComm * currUsdPerContract : null;
+        const dLargeUsd =
+          currUsdPerContract != null && dLarge != null ? dLarge * currUsdPerContract : null;
+
+        const smallGrossUsd =
+          currUsdPerContract != null ? smallGrossContracts * Math.abs(currUsdPerContract) : null;
+        const commercialsGrossUsd =
+          currUsdPerContract != null ? commercialsGrossContracts * Math.abs(currUsdPerContract) : null;
+        const largeGrossUsd =
+          currUsdPerContract != null
+            ? largeGrossContracts * Math.abs(currUsdPerContract)
+            : null;
+
+        const prevSmallGrossUsd =
+          prevUsdPerContract != null
+            ? prevSmallGrossContracts * Math.abs(prevUsdPerContract)
+            : null;
+        const prevCommercialsGrossUsd =
+          prevUsdPerContract != null
+            ? prevCommercialsGrossContracts * Math.abs(prevUsdPerContract)
+            : null;
+
+        const dSmallGrossContracts =
+          prevRow != null ? smallGrossContracts - prevSmallGrossContracts : null;
+        const dCommercialsGrossContracts =
+          prevRow != null ? commercialsGrossContracts - prevCommercialsGrossContracts : null;
+
+        const dSmallGrossUsd =
+          smallGrossUsd != null && prevSmallGrossUsd != null
+            ? smallGrossUsd - prevSmallGrossUsd
+            : null;
+        const dCommercialsGrossUsd =
+          commercialsGrossUsd != null && prevCommercialsGrossUsd != null
+            ? commercialsGrossUsd - prevCommercialsGrossUsd
+            : null;
+
+        const smallGrossContractsRocPct = rocPct(
+          smallGrossContracts,
+          prevRow != null ? prevSmallGrossContracts : null
+        );
+        const commercialsGrossContractsRocPct = rocPct(
+          commercialsGrossContracts,
+          prevRow != null ? prevCommercialsGrossContracts : null
+        );
+
+        const smallGrossUsdRocPct = rocPct(smallGrossUsd, prevSmallGrossUsd);
+        const commercialsGrossUsdRocPct = rocPct(
+          commercialsGrossUsd,
+          prevCommercialsGrossUsd
+        );
+
+        return {
+          date: isoDate(row.report_date),
+          release_date: row.release_date ? isoDate(row.release_date) : null,
+          next_report_date: row.next_report_date ? isoDate(row.next_report_date) : null,
+
+          open_interest: toNum(row.oi_total),
+
+          large_spec_net: netNc ?? 0,
+          large_spec_long: toNum(row.long_noncommercial),
+          large_spec_short: toNum(row.short_noncommercial),
+
+          small_traders_net: netSm,
+          small_traders_long: smL,
+          small_traders_short: smS,
+
+          commercials_net: netCm,
+          commercials_long: cmL,
+          commercials_short: cmS,
+
+          small_traders_gross_contracts: smallGrossContracts,
+          commercials_gross_contracts: commercialsGrossContracts,
+          large_spec_gross_contracts: largeGrossContracts,
+
+          d_small_gross_contracts: dSmallGrossContracts,
+          d_comm_gross_contracts: dCommercialsGrossContracts,
+
+          small_gross_contracts_roc_pct: smallGrossContractsRocPct,
+          comm_gross_contracts_roc_pct: commercialsGrossContractsRocPct,
+
+          report_price: toNum(row.report_price),
+          release_price: toNum(row.release_price),
+          next_report_price: toNum(row.next_report_price),
+
+          indexed_report_price: toNum(row.report_price),
+          indexed_release_price: toNum(row.release_price),
+
+          bias: row.position_bias,
+          positioning: row.position_trend,
+
+          move_pct_report_to_release: toNum(row.reaction_move_pct),
+          move_pct_release_to_next_report: toNum(row.release_to_next_report_move_pct),
+          move_pct_report_to_next_report: toNum(row.report_to_next_report_move_pct),
+
+          price_direction: row.reaction_direction,
+          reaction_type: row.reaction_type,
+
+          large_spec_net_usd: currLargeUsdExposure,
+          small_traders_net_usd: smallUsdExposure,
+          commercials_net_usd: commercialsUsdExposure,
+
+          large_spec_gross_usd: largeGrossUsd,
+          small_traders_gross_usd: smallGrossUsd,
+          commercials_gross_usd: commercialsGrossUsd,
+
+          d_small_gross_usd: dSmallGrossUsd,
+          d_comm_gross_usd: dCommercialsGrossUsd,
+
+          small_gross_usd_roc_pct: smallGrossUsdRocPct,
+          comm_gross_usd_roc_pct: commercialsGrossUsdRocPct,
+
+          usd_per_contract: currUsdPerContract,
+          prev_usd_per_contract: prevUsdPerContract,
+
+          d_large: dLarge,
+          d_large_long: toNum(row.d_long_noncommercial),
+          d_large_short: toNum(row.d_short_noncommercial),
+          d_small: dSmall,
+          d_comm: dComm,
+          d_oi: toNum(row.d_oi_total),
+          d_large_usd: dLargeUsd,
+          d_small_usd: dSmallUsd,
+          d_comm_usd: dCommUsd,
+        };
+      });
 
     return NextResponse.json({
       market: {

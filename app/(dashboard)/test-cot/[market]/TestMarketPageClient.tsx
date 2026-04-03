@@ -16,8 +16,17 @@ type RecentRow = {
   large_spec_net: number;
   large_spec_long?: number | null;
   large_spec_short?: number | null;
+  large_spec_gross_contracts?: number | null;
+
   small_traders_net: number;
+  small_traders_long?: number | null;
+  small_traders_short?: number | null;
+  small_traders_gross_contracts?: number | null;
+
   commercials_net: number;
+  commercials_long?: number | null;
+  commercials_short?: number | null;
+  commercials_gross_contracts?: number | null;
 
   report_price?: number | null;
   release_price?: number | null;
@@ -40,6 +49,12 @@ type RecentRow = {
   small_traders_net_usd?: number | null;
   commercials_net_usd?: number | null;
 
+  large_spec_gross_usd?: number | null;
+  small_traders_gross_usd?: number | null;
+  commercials_gross_usd?: number | null;
+
+  usd_per_contract?: number | null;
+
   d_large?: number;
   d_large_long?: number;
   d_large_short?: number;
@@ -49,6 +64,20 @@ type RecentRow = {
   d_large_usd?: number;
   d_small_usd?: number;
   d_comm_usd?: number;
+
+  d_small_gross_contracts?: number | null;
+  d_comm_gross_contracts?: number | null;
+
+  small_gross_contracts_roc_pct?: number | null;
+  comm_gross_contracts_roc_pct?: number | null;
+
+  d_small_gross_usd?: number | null;
+  d_comm_gross_usd?: number | null;
+
+  small_gross_usd_roc_pct?: number | null;
+  comm_gross_usd_roc_pct?: number | null;
+
+  prev_usd_per_contract?: number | null;
 };
 
 type MarketApiResponse = {
@@ -224,6 +253,10 @@ function grossPositionHelpText() {
 
 function rangeHelpText(label: string) {
   return `${label} compares the current reading to the last 52 weeks of data visible on this page.`;
+}
+
+function participantDepthHelpText() {
+  return "Main value shows gross USD depth: (long + short) converted into USD. Lower lines show weekly net USD change, current net USD exposure, and total gross contracts.";
 }
 
 function getDisplayReportPrice(row: RecentRow, isFx: boolean) {
@@ -410,6 +443,69 @@ function StatCard({
       </div>
       <div className={`mt-2 text-lg font-semibold ${valueClass}`}>{value}</div>
       {subvalue ? <div className="mt-1 text-xs text-slate-400">{subvalue}</div> : null}
+    </div>
+  );
+}
+
+function DepthUsdCard({
+  label,
+  netUsd,
+  deltaUsd,
+  grossUsd,
+  grossUsdDelta,
+  grossUsdRoc,
+  grossContracts,
+  grossContractsDelta,
+  grossContractsRoc,
+}: {
+  label: string;
+  netUsd: number | null | undefined;
+  deltaUsd: number | null | undefined;
+  grossUsd: number | null | undefined;
+  grossUsdDelta: number | null | undefined;
+  grossUsdRoc: number | null | undefined;
+  grossContracts: number | null | undefined;
+  grossContractsDelta: number | null | undefined;
+  grossContractsRoc: number | null | undefined;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+      <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-400">
+        <span>{label}</span>
+        <TooltipInfo text="Top line shows net USD positioning. Second line shows weekly change in net USD. Bottom rows show gross USD depth and gross contracts, each with weekly change and ROC." />
+      </div>
+
+      <div className="mt-2 text-lg font-semibold text-slate-100">
+        {fmtUsd(netUsd)}
+      </div>
+
+      <div className="mt-1 text-xs">
+        <DeltaLine value={deltaUsd} formatter={fmtUsd} />
+      </div>
+
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-400">
+        <span>
+          Gross USD: <span className="tabular-nums text-slate-200">{fmtUsd(grossUsd)}</span>
+        </span>
+        <span className={deltaToneClass(grossUsdDelta)}>
+          {grossUsdDelta == null ? "—" : `${deltaIcon(grossUsdDelta)} ${fmtUsd(Math.abs(grossUsdDelta))}`}
+        </span>
+        <span>
+          ROC: <span className="tabular-nums text-slate-200">{fmtPct(grossUsdRoc)}</span>
+        </span>
+      </div>
+
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-400">
+        <span>
+          Gross ctr: <span className="tabular-nums text-slate-200">{fmtNum(grossContracts)}</span>
+        </span>
+        <span className={deltaToneClass(grossContractsDelta)}>
+          {grossContractsDelta == null ? "—" : `${deltaIcon(grossContractsDelta)} ${fmtNum(Math.abs(grossContractsDelta))}`}
+        </span>
+        <span>
+          ROC: <span className="tabular-nums text-slate-200">{fmtPct(grossContractsRoc)}</span>
+        </span>
+      </div>
     </div>
   );
 }
@@ -939,17 +1035,29 @@ export default function TestMarketPageClient({
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <StatCard
-              label="Small traders USD"
-              value={fmtUsd(latest.small_traders_net_usd)}
-              subvalue={<DeltaLine value={latest.d_small_usd} formatter={fmtUsd} />}
-            />
+            <DepthUsdCard
+  label="Small traders USD"
+  netUsd={latest.small_traders_net_usd}
+  deltaUsd={latest.d_small_usd}
+  grossUsd={latest.small_traders_gross_usd}
+  grossUsdDelta={latest.d_small_gross_usd}
+  grossUsdRoc={latest.small_gross_usd_roc_pct}
+  grossContracts={latest.small_traders_gross_contracts}
+  grossContractsDelta={latest.d_small_gross_contracts}
+  grossContractsRoc={latest.small_gross_contracts_roc_pct}
+/>
 
-            <StatCard
-              label="Commercials USD"
-              value={fmtUsd(latest.commercials_net_usd)}
-              subvalue={<DeltaLine value={latest.d_comm_usd} formatter={fmtUsd} />}
-            />
+<DepthUsdCard
+  label="Commercials USD"
+  netUsd={latest.commercials_net_usd}
+  deltaUsd={latest.d_comm_usd}
+  grossUsd={latest.commercials_gross_usd}
+  grossUsdDelta={latest.d_comm_gross_usd}
+  grossUsdRoc={latest.comm_gross_usd_roc_pct}
+  grossContracts={latest.commercials_gross_contracts}
+  grossContractsDelta={latest.d_comm_gross_contracts}
+  grossContractsRoc={latest.comm_gross_contracts_roc_pct}
+/>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
