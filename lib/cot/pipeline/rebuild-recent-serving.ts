@@ -5,23 +5,41 @@ type RecentMarketRow = {
   market_code: string;
 };
 
-function cutoffRecent(days: number): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - days);
-  return d.toISOString().slice(0, 10);
-}
-
-export async function rebuildRecentServing(days = 35) {
+export async function rebuildRecentServing() {
   const supabase = getSupabaseAdmin();
-  const cutoff = cutoffRecent(days);
+
+  const { data: latestRow, error: latestError } = await supabase
+    .from("cot_reports")
+    .select("report_date")
+    .order("report_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (latestError) {
+    throw new Error(`Failed to load latest report date: ${latestError.message}`);
+  }
+
+  const latestReportDate = latestRow?.report_date
+    ? String(latestRow.report_date).slice(0, 10)
+    : null;
+
+  if (!latestReportDate) {
+    return {
+      ok: true,
+      latestReportDate: null,
+      marketsRebuilt: 0,
+      marketCodes: [],
+      results: [],
+    };
+  }
 
   const { data, error } = await supabase
     .from("cot_reports")
     .select("market_code")
-    .gte("report_date", cutoff);
+    .eq("report_date", latestReportDate);
 
   if (error) {
-    throw new Error(`Failed to load recent markets: ${error.message}`);
+    throw new Error(`Failed to load latest-report markets: ${error.message}`);
   }
 
   const marketCodes = Array.from(
@@ -40,7 +58,7 @@ export async function rebuildRecentServing(days = 35) {
 
   return {
     ok: true,
-    cutoff,
+    latestReportDate,
     marketsRebuilt: marketCodes.length,
     marketCodes,
     results,
