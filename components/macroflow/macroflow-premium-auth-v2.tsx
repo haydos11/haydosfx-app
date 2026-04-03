@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { motion } from "framer-motion";
-import { useMemo, useState, type FormEvent } from "react";
+import { Suspense, useMemo, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -438,7 +438,50 @@ function FormInput({
   );
 }
 
-function RightSidePanel() {
+function RightSidePanelFallback() {
+  return (
+    <div className="relative flex min-h-screen w-full items-center justify-center px-6 py-10 xl:w-[42%] xl:px-10">
+      <AmbientOrb className="right-4 top-20 h-[260px] w-[260px]" delay={1.1} duration={13} />
+      <AmbientOrb className="bottom-16 left-10 h-[220px] w-[220px]" delay={1.8} duration={15} />
+
+      <div className="relative z-10 w-full max-w-[460px]">
+        <div className="overflow-hidden rounded-[30px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))] p-[1px] shadow-[0_18px_100px_rgba(0,0,0,0.6)]">
+          <div className="rounded-[29px] border border-white/6 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.05),transparent_28%),linear-gradient(180deg,rgba(2,4,8,0.98),rgba(4,7,13,0.98))] p-7 sm:p-8">
+            <div className="flex items-center gap-4">
+              <div className="relative h-16 w-16 overflow-hidden rounded-2xl border border-white/8 bg-white/[0.025]">
+                <Image
+                  src="/branding/macroflow-logo.png"
+                  alt="MacroFlow logo"
+                  fill
+                  className="object-contain p-1.5"
+                  priority
+                />
+              </div>
+
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-cyan-400/12 bg-cyan-400/5 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-cyan-200/75">
+                  Premium access
+                </div>
+                <h2 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-white">
+                  MacroFlow
+                </h2>
+                <p className="mt-1 text-[11px] uppercase tracking-[0.35em] text-slate-600">
+                  Research • narrative • execution
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-8 rounded-xl border border-white/8 bg-black/30 px-4 py-3 text-sm text-slate-400">
+              Loading login…
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RightSidePanelInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
@@ -737,6 +780,14 @@ function RightSidePanel() {
         </div>
       </motion.div>
     </div>
+  );
+}
+
+function RightSidePanel() {
+  return (
+    <Suspense fallback={<RightSidePanelFallback />}>
+      <RightSidePanelInner />
+    </Suspense>
   );
 }
 
