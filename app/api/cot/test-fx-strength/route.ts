@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { requireApiPremium } from "@/lib/auth/require-api-premium";
 
 const LABEL_BY_CODE: Record<string, string> = {
   "6A": "AUD",
@@ -44,6 +45,9 @@ type Row = {
 
 export async function GET(req: NextRequest) {
   try {
+    const gate = await requireApiPremium();
+    if (!gate.ok) return gate.response;
+    
     const supabase = getSupabaseAdmin();
     const range = (req.nextUrl.searchParams.get("range") ?? "1y").toLowerCase();
     const startDate = cutoffFor(range);

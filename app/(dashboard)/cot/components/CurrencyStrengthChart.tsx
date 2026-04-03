@@ -5,8 +5,12 @@ import type { EChartsOption, LineSeriesOption } from "echarts";
 import SafeEChart from "@/components/charts/SafeEChart";
 
 type Point = { date: string; netNotionalUSD: number | null };
-type MarketResp = { points?: Point[] };
-type SeriesMap = Record<string, Record<string, number | null>>; // date -> label -> value
+type MarketResp = {
+  points?: Point[];
+  dates?: string[];
+  large_usd?: (number | null)[];
+};
+type SeriesMap = Record<string, Record<string, number | null>>;
 
 const CURRENCIES = [
   { key: "aud", label: "AUD" },
@@ -19,24 +23,25 @@ const CURRENCIES = [
 ];
 
 const BILLION = 1e9;
+
 const fmtBillions = (n: number) => {
   const sign = n < 0 ? "-" : "";
   const v = Math.abs(n) / BILLION;
   const dec = v < 100 ? 1 : 0;
   return `${sign}${v.toFixed(dec)}B`;
 };
+
 const fmtYYMM = (d: string) => {
   const [y, m] = d.split("-");
   return `${y.slice(2)}-${m}`;
 };
 
-/* ---------------- Small client cache with lastGood ---------------- */
 type Cached = { json: MarketResp; ts: number; lastGood?: MarketResp };
-const respCache = new Map<string, Cached>();       // key: `${market}:${range}`
-const lastGoodByMarket = new Map<string, MarketResp>(); // key: market (any range)
+const respCache = new Map<string, Cached>();
+const lastGoodByMarket = new Map<string, MarketResp>();
 const inflight = new Map<string, Promise<MarketResp>>();
 
-const TTL_MS = 60_000; // refresh window
+const TTL_MS = 60_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -47,7 +52,9 @@ function cutoffFor(range: string): string | null {
       d.setUTCFullYear(d.getUTCFullYear() - 1);
       break;
     case "ytd":
-      return new Date(new Date().getUTCFullYear(), 0, 1).toISOString().slice(0, 10);
+      return new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1))
+        .toISOString()
+        .slice(0, 10);
     case "3y":
       d.setUTCFullYear(d.getUTCFullYear() - 3);
       break;
@@ -60,22 +67,54 @@ function cutoffFor(range: string): string | null {
   return d.toISOString().slice(0, 10);
 }
 
+function normalizePoints(json: MarketResp): Point[] {
+  if (Array.isArray(json.points) && json.points.length) {
+    return json.points.map((p) => ({
+      date: String(p.date).slice(0, 10),
+      netNotionalUSD:
+        typeof p.netNotionalUSD === "number" && Number.isFinite(p.netNotionalUSD)
+          ? p.netNotionalUSD
+          : null,
+    }));
+  }
+
+  if (
+    Array.isArray(json.dates) &&
+    Array.isArray(json.large_usd) &&
+    json.dates.length &&
+    json.large_usd.length
+  ) {
+    const len = Math.min(json.dates.length, json.large_usd.length);
+    return Array.from({ length: len }, (_, i) => ({
+      date: String(json.dates?.[i] ?? "").slice(0, 10),
+      netNotionalUSD:
+        typeof json.large_usd?.[i] === "number" && Number.isFinite(json.large_usd[i] as number)
+          ? (json.large_usd[i] as number)
+          : null,
+    })).filter((p) => p.date);
+  }
+
+  return [];
+}
+
 function trimToRange(points: Point[], range: string): Point[] {
   const cut = cutoffFor(range);
   if (!cut) return points;
   return points.filter((p) => p.date >= cut);
 }
 
-async function fetchRange(market: string, range: string, cacheMode: RequestCache): Promise<MarketResp> {
+async function fetchRange(
+  market: string,
+  range: string,
+  cacheMode: RequestCache
+): Promise<MarketResp> {
   const url = `/api/cot/market/${market}?range=${encodeURIComponent(range)}&basis=usd`;
   const res = await fetch(url, { cache: cacheMode });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as MarketResp;
 }
 
-/** try requested range; on failure, try 3y -> 5y and trim back to requested window */
 async function fetchRobust(market: string, range: string): Promise<MarketResp> {
-  // prefer network on 1y, otherwise revalidate
   const plan: Array<{ r: string; mode: RequestCache }> =
     range === "1y"
       ? [
@@ -86,13 +125,12 @@ async function fetchRobust(market: string, range: string): Promise<MarketResp> {
       : [{ r: range, mode: "no-cache" }];
 
   let lastErr: unknown;
+
   for (const step of plan) {
     try {
-      const json = await fetchRange(market, step.r, step.mode);
-      const normalized: MarketResp = json.points
-        ? { points: trimToRange(json.points, range) }
-        : { points: [] };
-      // remember last good for this market (any range)
+      const raw = await fetchRange(market, step.r, step.mode);
+      const normalizedPoints = trimToRange(normalizePoints(raw), range);
+      const normalized: MarketResp = { points: normalizedPoints };
       lastGoodByMarket.set(market, normalized);
       return normalized;
     } catch (e) {
@@ -101,11 +139,11 @@ async function fetchRobust(market: string, range: string): Promise<MarketResp> {
     }
   }
 
-  // if all attempts failed, use last good (any previous range) if present
   const lg = lastGoodByMarket.get(market);
   if (lg) {
-    return { points: trimToRange(lg.points ?? [], range) };
+    return { points: trimToRange(normalizePoints(lg), range) };
   }
+
   throw lastErr instanceof Error ? lastErr : new Error("fetch failed");
 }
 
@@ -113,8 +151,8 @@ async function fetchWithCache(market: string, range: string): Promise<MarketResp
   const key = `${market}:${range}`;
   const c = respCache.get(key);
   const now = Date.now();
-  if (c && now - c.ts < TTL_MS) return c.json;
 
+  if (c && now - c.ts < TTL_MS) return c.json;
   if (inflight.has(key)) return inflight.get(key)!;
 
   const p = (async () => {
@@ -131,10 +169,10 @@ async function fetchWithCache(market: string, range: string): Promise<MarketResp
   return p;
 }
 
-/** forward-fill each currency so the last row is fully populated */
 function forwardFill(byDate: SeriesMap): SeriesMap {
   const dates = Object.keys(byDate).sort();
   if (!dates.length) return byDate;
+
   const labels = Object.keys(byDate[dates[0]] ?? {});
   const lastSeen: Record<string, number | null> = {};
   for (const l of labels) lastSeen[l] = null;
@@ -147,10 +185,10 @@ function forwardFill(byDate: SeriesMap): SeriesMap {
       else if (lastSeen[l] != null) row[l] = lastSeen[l];
     }
   }
+
   return byDate;
 }
 
-/** Wrapper that prevents the chart from capturing wheel/touch, so the page scrolls instead */
 function NoScrollChart({
   option,
   height,
@@ -167,7 +205,6 @@ function NoScrollChart({
       onWheelCapture={(e) => e.stopPropagation()}
       onTouchMoveCapture={(e) => e.stopPropagation()}
     >
-      {/* Force series replacement + remount on toggle */}
       <SafeEChart
         option={option}
         height={height}
@@ -202,11 +239,11 @@ export default function CurrencyStrengthChart({
 
       const results: Array<{ label: string; points: Point[]; ok: boolean }> = [];
 
-      // fetch serially (gentle on upstream)
       for (const c of CURRENCIES) {
         try {
           const json = await fetchWithCache(c.key, range);
-          results.push({ label: c.label, ok: true, points: json.points ?? [] });
+          const points = normalizePoints(json);
+          results.push({ label: c.label, ok: true, points });
         } catch {
           results.push({ label: c.label, ok: false, points: [] });
         }
@@ -214,41 +251,55 @@ export default function CurrencyStrengthChart({
 
       if (cancelled) return;
 
-      if (results.every((r) => !r.ok || (r.points?.length ?? 0) === 0)) {
+      const usableCount = results.filter((r) => r.points.length > 0).length;
+
+      if (usableCount === 0) {
         setErr("Data temporarily unavailable.");
         setLoading(false);
         return;
       }
 
-      // union of dates across currencies
       const dateSet = new Set<string>();
-      for (const r of results) for (const p of r.points) if (p?.date) dateSet.add(p.date);
+      for (const r of results) {
+        for (const p of r.points) {
+          if (p?.date) dateSet.add(p.date);
+        }
+      }
+
       const allDates = Array.from(dateSet).sort();
 
-      // build byDate
+      if (!allDates.length) {
+        setErr("Data temporarily unavailable.");
+        setLoading(false);
+        return;
+      }
+
       const byDate: SeriesMap = {};
       for (const d of allDates) byDate[d] = {};
 
       for (const { label, points } of results) {
         for (const p of points) {
           if (!p?.date) continue;
-          const v =
+          byDate[p.date][label] =
             typeof p.netNotionalUSD === "number" && Number.isFinite(p.netNotionalUSD)
               ? p.netNotionalUSD
               : null;
-          byDate[p.date][label] = v;
         }
       }
 
-      // ensure all labels exist per date
       const labels = CURRENCIES.map((c) => c.label);
-      for (const d of allDates) for (const l of labels) if (!(l in byDate[d])) byDate[d][l] = null;
+      for (const d of allDates) {
+        for (const l of labels) {
+          if (!(l in byDate[d])) byDate[d][l] = null;
+        }
+      }
 
       const filled = forwardFill(byDate);
 
-      // warning if any currency had to use fallback/empty
-      const empties = results.filter((r) => (r.points?.length ?? 0) === 0).map((r) => r.label);
-      if (empties.length) setWarn(`Using cached/older data for: ${empties.join(", ")}`);
+      const empties = results.filter((r) => r.points.length === 0).map((r) => r.label);
+      if (empties.length) {
+        setWarn(`Some markets returned no usable USD notional data: ${empties.join(", ")}`);
+      }
 
       setData(filled);
       setLoading(false);
@@ -267,6 +318,7 @@ export default function CurrencyStrengthChart({
     const step = Math.max(1, Math.ceil(dates.length / target));
 
     const series: LineSeriesOption[] = CURRENCIES.map(({ label }) => ({
+      id: label,
       name: label,
       type: "line",
       showSymbol: false,
@@ -282,6 +334,7 @@ export default function CurrencyStrengthChart({
         const row = data[d];
         let sum = 0;
         let hasAny = false;
+
         for (const { label } of CURRENCIES) {
           const v = row?.[label];
           if (typeof v === "number") {
@@ -289,10 +342,12 @@ export default function CurrencyStrengthChart({
             hasAny = true;
           }
         }
+
         return hasAny ? -sum : null;
       });
-      const usdSeries: LineSeriesOption = {
-        id: "USD_inferred", // <-- stable id so echarts can remove it on replaceMerge
+
+      series.push({
+        id: "USD_inferred",
         name: "USD* (inferred)",
         type: "line",
         showSymbol: false,
@@ -302,13 +357,15 @@ export default function CurrencyStrengthChart({
         emphasis: { focus: "series" },
         data: usdData,
         z: 10,
-      };
-      series.push(usdSeries);
+      });
     }
 
-    const allEmpty = series.every((s) => (s.data as (number | null)[]).every((v) => v == null));
+    const allEmpty = series.every((s) =>
+      ((s.data ?? []) as (number | null)[]).every((v) => v == null)
+    );
+
     if (allEmpty) {
-      const emptyOption: EChartsOption = {
+      return {
         backgroundColor: "transparent",
         graphic: {
           type: "text",
@@ -321,10 +378,9 @@ export default function CurrencyStrengthChart({
           },
         },
       };
-      return emptyOption;
     }
 
-    const chartOption: EChartsOption = {
+    return {
       backgroundColor: "transparent",
       tooltip: {
         trigger: "axis",
@@ -351,16 +407,24 @@ export default function CurrencyStrengthChart({
         type: "value",
         name: "USD (billions)",
         nameTextStyle: { color: "#94a3b8", padding: [0, 0, 4, 0] },
-        axisLabel: { color: "#cbd5e1", formatter: (val: number) => fmtBillions(val), margin: 6 },
+        axisLabel: {
+          color: "#cbd5e1",
+          formatter: (val: number) => fmtBillions(val),
+          margin: 6,
+        },
         splitLine: { lineStyle: { color: "rgba(148,163,184,0.22)" } },
       },
       dataZoom: [
-        { type: "inside", zoomOnMouseWheel: false, moveOnMouseWheel: false, moveOnMouseMove: false },
+        {
+          type: "inside",
+          zoomOnMouseWheel: false,
+          moveOnMouseWheel: false,
+          moveOnMouseMove: false,
+        },
         { type: "slider", show: false },
       ],
       series,
     };
-    return chartOption;
   }, [data, showUSD]);
 
   if (loading) return <div className="text-sm text-slate-400">Loading currency strength…</div>;
@@ -389,7 +453,7 @@ export default function CurrencyStrengthChart({
       <NoScrollChart
         option={option}
         height={height}
-        mergeKey={`cs-${showUSD ? "1" : "0"}`} // remount on toggle (extra safety)
+        mergeKey={`cs-${showUSD ? "1" : "0"}`}
       />
 
       <div className="mt-2 text-xs text-slate-400">

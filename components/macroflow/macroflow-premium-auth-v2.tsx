@@ -1,14 +1,10 @@
 "use client";
 
 import Image from "next/image";
-import {
-  motion,
-  useMotionTemplate,
-  useMotionValue,
-  useSpring,
-  useTransform,
-} from "framer-motion";
-import { useMemo, useState } from "react";
+import { motion } from "framer-motion";
+import { useMemo, useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 type Mode = "signin" | "register";
 
@@ -17,7 +13,7 @@ const signalRows = [
   { label: "EUR", bias: "Soft", value: "-0.31", tone: "amber" },
   { label: "GBP", bias: "Mixed", value: "+0.08", tone: "sky" },
   { label: "JPY", bias: "Weak", value: "-0.54", tone: "rose" },
-];
+] as const;
 
 const tags = ["Rates", "Inflation", "Yields", "COT", "Flows", "Events", "Narrative"];
 
@@ -27,38 +23,6 @@ const toneMap = {
   sky: "border-sky-400/25 bg-sky-400/10 text-sky-200",
   rose: "border-rose-400/25 bg-rose-400/10 text-rose-200",
 } as const;
-
-function useSceneParallax() {
-  const mouseX = useMotionValue(0);
-  const mouseY = useMotionValue(0);
-
-  const smoothX = useSpring(mouseX, { stiffness: 70, damping: 18, mass: 0.5 });
-  const smoothY = useSpring(mouseY, { stiffness: 70, damping: 18, mass: 0.5 });
-
-  const sceneX = useTransform(smoothX, [-0.5, 0.5], [-18, 18]);
-  const sceneY = useTransform(smoothY, [-0.5, 0.5], [-12, 12]);
-
-  const cardX = useTransform(smoothX, [-0.5, 0.5], [-10, 10]);
-  const cardY = useTransform(smoothY, [-0.5, 0.5], [-8, 8]);
-
-  const glowX = useTransform(smoothX, [-0.5, 0.5], [-30, 30]);
-  const glowY = useTransform(smoothY, [-0.5, 0.5], [-24, 24]);
-
-  const onMove = (event: React.MouseEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - rect.left) / rect.width - 0.5;
-    const y = (event.clientY - rect.top) / rect.height - 0.5;
-    mouseX.set(x);
-    mouseY.set(y);
-  };
-
-  const reset = () => {
-    mouseX.set(0);
-    mouseY.set(0);
-  };
-
-  return { sceneX, sceneY, cardX, cardY, glowX, glowY, onMove, reset, mouseX, mouseY };
-}
 
 function NoiseOverlay() {
   return (
@@ -137,15 +101,9 @@ function AmbientOrb({
   );
 }
 
-function MacroNetwork({
-  x,
-  y,
-}: {
-  x: any;
-  y: any;
-}) {
+function MacroNetwork() {
   return (
-    <motion.div style={{ x, y }} className="relative">
+    <div className="relative">
       <motion.svg
         viewBox="0 0 1000 620"
         className="relative z-10 h-[450px] w-full max-w-[860px] opacity-[0.82]"
@@ -230,7 +188,7 @@ function MacroNetwork({
           </circle>
         </g>
       </motion.svg>
-    </motion.div>
+    </div>
   );
 }
 
@@ -267,10 +225,9 @@ function MiniTicker() {
   );
 }
 
-function SignalCard({ x, y }: { x: any; y: any }) {
+function SignalCard() {
   return (
     <motion.div
-      style={{ x, y }}
       initial={{ opacity: 0, x: -28, y: 18, filter: "blur(8px)" }}
       animate={{ opacity: 1, x: 0, y: 0, filter: "blur(0px)" }}
       transition={{ duration: 1, delay: 1.45, ease: "easeOut" }}
@@ -307,9 +264,7 @@ function SignalCard({ x, y }: { x: any; y: any }) {
               <p className="text-sm font-medium text-white/90">{row.label}</p>
               <p className="text-xs text-slate-500">{row.bias} macro bias</p>
             </div>
-            <div
-              className={`rounded-full border px-2.5 py-1 text-xs ${toneMap[row.tone as keyof typeof toneMap]}`}
-            >
+            <div className={`rounded-full border px-2.5 py-1 text-xs ${toneMap[row.tone]}`}>
               {row.value}
             </div>
           </motion.div>
@@ -319,10 +274,9 @@ function SignalCard({ x, y }: { x: any; y: any }) {
   );
 }
 
-function WorkflowCard({ x, y }: { x: any; y: any }) {
+function WorkflowCard() {
   return (
     <motion.div
-      style={{ x, y }}
       initial={{ opacity: 0, x: 28, y: 18, filter: "blur(8px)" }}
       animate={{ opacity: 1, x: 0, y: 0, filter: "blur(0px)" }}
       transition={{ duration: 1, delay: 1.65, ease: "easeOut" }}
@@ -346,26 +300,11 @@ function WorkflowCard({ x, y }: { x: any; y: any }) {
 }
 
 function LeftSideScene() {
-  const { sceneX, sceneY, cardX, cardY, glowX, glowY, onMove, reset, mouseX, mouseY } =
-    useSceneParallax();
-
-  const spotlight = useMotionTemplate`radial-gradient(circle at ${useTransform(
-    mouseX,
-    [-0.5, 0.5],
-    ["38%", "62%"],
-  )} ${useTransform(mouseY, [-0.5, 0.5], ["36%", "54%"])}, rgba(56,189,248,0.09), transparent 34%)`;
-
   return (
-    <div
-      onMouseMove={onMove}
-      onMouseLeave={reset}
-      className="relative hidden min-h-screen overflow-hidden border-r border-white/6 xl:flex xl:w-[58%]"
-    >
-      <motion.div style={{ x: glowX, y: glowY }} className="absolute inset-0">
-        <AmbientOrb className="-left-28 top-16 h-[380px] w-[380px]" delay={0.8} duration={14} />
-        <AmbientOrb className="left-[30%] top-[44%] h-[440px] w-[440px]" delay={1.3} duration={16} />
-        <AmbientOrb className="right-0 top-12 h-[300px] w-[300px]" delay={2.2} duration={13} />
-      </motion.div>
+    <div className="relative hidden min-h-screen overflow-hidden border-r border-white/6 xl:flex xl:w-[58%]">
+      <AmbientOrb className="-left-28 top-16 h-[380px] w-[380px]" delay={0.8} duration={14} />
+      <AmbientOrb className="left-[30%] top-[44%] h-[440px] w-[440px]" delay={1.3} duration={16} />
+      <AmbientOrb className="right-0 top-12 h-[300px] w-[300px]" delay={2.2} duration={13} />
 
       <ScanLines />
       <DotGrid />
@@ -378,18 +317,13 @@ function LeftSideScene() {
         className="absolute inset-0 bg-[radial-gradient(circle_at_18%_16%,rgba(34,211,238,0.05),transparent_24%),radial-gradient(circle_at_76%_18%,rgba(59,130,246,0.04),transparent_18%),radial-gradient(circle_at_52%_82%,rgba(14,165,233,0.03),transparent_24%)]"
       />
 
-      <motion.div style={{ background: spotlight }} className="absolute inset-0 opacity-100" />
-
       <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-cyan-400/20 to-transparent" />
 
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_40%,rgba(0,0,0,0.38)_76%,rgba(0,0,0,0.82)_100%)]" />
       <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(0,0,0,0.7),transparent_22%,transparent_78%,rgba(0,0,0,0.72))]" />
       <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.65),transparent_18%,transparent_82%,rgba(0,0,0,0.82))]" />
 
-      <motion.div
-        style={{ x: sceneX, y: sceneY }}
-        className="relative z-10 flex w-full flex-col justify-between px-10 py-12 2xl:px-16"
-      >
+      <div className="relative z-10 flex w-full flex-col justify-between px-10 py-12 2xl:px-16">
         <motion.div
           initial={{ opacity: 0, y: 26, filter: "blur(10px)" }}
           animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
@@ -438,14 +372,11 @@ function LeftSideScene() {
           </motion.div>
 
           <div className="absolute inset-x-0 top-10 flex justify-center">
-            <MacroNetwork x={sceneX} y={sceneY} />
+            <MacroNetwork />
           </div>
 
-          <SignalCard x={cardX} y={cardY} />
-          <WorkflowCard
-            x={useTransform(cardX, (v) => -v * 0.65)}
-            y={useTransform(cardY, (v) => -v * 0.65)}
-          />
+          <SignalCard />
+          <WorkflowCard />
 
           <motion.div
             aria-hidden
@@ -468,7 +399,7 @@ function LeftSideScene() {
             className="absolute left-[22%] top-[22%] h-40 w-40 rounded-full border border-cyan-300/18"
           />
         </div>
-      </motion.div>
+      </div>
 
       <MiniTicker />
     </div>
@@ -479,10 +410,16 @@ function FormInput({
   label,
   type = "text",
   placeholder,
+  value,
+  onChange,
+  autoComplete,
 }: {
   label: string;
   type?: string;
   placeholder?: string;
+  value: string;
+  onChange: (value: string) => void;
+  autoComplete?: string;
 }) {
   return (
     <label className="block">
@@ -492,6 +429,9 @@ function FormInput({
       <input
         type={type}
         placeholder={placeholder}
+        value={value}
+        autoComplete={autoComplete}
+        onChange={(e) => onChange(e.target.value)}
         className="w-full rounded-xl border border-white/8 bg-black/40 px-4 py-3 text-sm text-white placeholder:text-slate-700 outline-none transition focus:border-cyan-300/35 focus:bg-black/50 focus:shadow-[0_0_0_4px_rgba(34,211,238,0.06)]"
       />
     </label>
@@ -499,26 +439,123 @@ function FormInput({
 }
 
 function RightSidePanel() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const supabase = createClient();
+
   const [mode, setMode] = useState<Mode>("signin");
-  const title = useMemo(() => (mode === "signin" ? "Enter workspace" : "Create access"), [mode]);
+  const [fullName, setFullName] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [errorText, setErrorText] = useState("");
+  const [successText, setSuccessText] = useState("");
 
-  const mx = useMotionValue(0);
-  const my = useMotionValue(0);
-  const sx = useSpring(mx, { stiffness: 90, damping: 18, mass: 0.5 });
-  const sy = useSpring(my, { stiffness: 90, damping: 18, mass: 0.5 });
-  const tiltX = useTransform(sy, [-0.5, 0.5], [4, -4]);
-  const tiltY = useTransform(sx, [-0.5, 0.5], [-5, 5]);
+  const nextPath = searchParams.get("next") || "/test-cot";
 
-  const onMove = (event: React.MouseEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    mx.set((event.clientX - rect.left) / rect.width - 0.5);
-    my.set((event.clientY - rect.top) / rect.height - 0.5);
-  };
+  const title = useMemo(
+    () => (mode === "signin" ? "Enter workspace" : "Create access"),
+    [mode],
+  );
 
-  const reset = () => {
-    mx.set(0);
-    my.set(0);
-  };
+  async function handleSignIn(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setLoading(true);
+    setErrorText("");
+    setSuccessText("");
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+
+    if (error) {
+      setLoading(false);
+      setErrorText(error.message);
+      return;
+    }
+
+    router.push(nextPath);
+    router.refresh();
+  }
+
+  async function handleRegister(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setLoading(true);
+    setErrorText("");
+    setSuccessText("");
+
+    const cleanEmail = email.trim();
+
+    const { data, error } = await supabase.auth.signUp({
+      email: cleanEmail,
+      password,
+      options: {
+        data: {
+          full_name: fullName.trim() || null,
+          invite_code: inviteCode.trim() || null,
+        },
+      },
+    });
+
+    if (error) {
+      setLoading(false);
+      setErrorText(error.message);
+      return;
+    }
+
+    const user = data.user;
+
+    if (user) {
+      const profileResult = await supabase.from("profiles").upsert({
+        id: user.id,
+        email: cleanEmail,
+        full_name: fullName.trim() || null,
+        role: "user",
+      });
+
+      if (profileResult.error) {
+        setLoading(false);
+        setErrorText(profileResult.error.message);
+        return;
+      }
+
+      const subResult = await supabase.from("subscriptions").upsert({
+        user_id: user.id,
+        status: "inactive",
+        plan: "free",
+      });
+
+      if (subResult.error) {
+        setLoading(false);
+        setErrorText(subResult.error.message);
+        return;
+      }
+    }
+
+    setLoading(false);
+
+    if (data.session) {
+      router.push(nextPath);
+      router.refresh();
+      return;
+    }
+
+    setSuccessText(
+      "Account created. Check your email to confirm your address if your Supabase auth settings require email verification.",
+    );
+    setMode("signin");
+  }
+
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    if (mode === "signin") {
+      await handleSignIn(e);
+      return;
+    }
+
+    await handleRegister(e);
+  }
 
   return (
     <div className="relative flex min-h-screen w-full items-center justify-center px-6 py-10 xl:w-[42%] xl:px-10">
@@ -526,9 +563,6 @@ function RightSidePanel() {
       <AmbientOrb className="bottom-16 left-10 h-[220px] w-[220px]" delay={1.8} duration={15} />
 
       <motion.div
-        onMouseMove={onMove}
-        onMouseLeave={reset}
-        style={{ rotateX: tiltX, rotateY: tiltY, transformPerspective: 1600 }}
         initial={{ opacity: 0, y: 42, scale: 0.985, filter: "blur(12px)" }}
         animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
         transition={{ duration: 1.1, delay: 1.55, ease: "easeOut" }}
@@ -563,7 +597,11 @@ function RightSidePanel() {
             <div className="mt-8 inline-flex rounded-full border border-white/8 bg-white/[0.025] p-1">
               <button
                 type="button"
-                onClick={() => setMode("signin")}
+                onClick={() => {
+                  setMode("signin");
+                  setErrorText("");
+                  setSuccessText("");
+                }}
                 className={`rounded-full px-4 py-2 text-xs uppercase tracking-[0.25em] transition ${
                   mode === "signin"
                     ? "bg-cyan-400/10 text-cyan-200 shadow-[inset_0_0_0_1px_rgba(103,232,249,0.16)]"
@@ -574,7 +612,11 @@ function RightSidePanel() {
               </button>
               <button
                 type="button"
-                onClick={() => setMode("register")}
+                onClick={() => {
+                  setMode("register");
+                  setErrorText("");
+                  setSuccessText("");
+                }}
                 className={`rounded-full px-4 py-2 text-xs uppercase tracking-[0.25em] transition ${
                   mode === "register"
                     ? "bg-fuchsia-400/10 text-fuchsia-200 shadow-[inset_0_0_0_1px_rgba(217,70,239,0.16)]"
@@ -593,26 +635,70 @@ function RightSidePanel() {
               </p>
             </div>
 
-            <form className="mt-8 space-y-4">
+            <form className="mt-8 space-y-4" onSubmit={handleSubmit}>
               {mode === "register" && (
-                <FormInput label="Full name" placeholder="Hayden Stewart" />
+                <FormInput
+                  label="Full name"
+                  placeholder="Max Pips"
+                  value={fullName}
+                  onChange={setFullName}
+                  autoComplete="name"
+                />
               )}
-              <FormInput label="Email" type="email" placeholder="you@macroflow.com" />
-              <FormInput label="Password" type="password" placeholder="••••••••••••" />
+
+              <FormInput
+                label="Email"
+                type="email"
+                placeholder="you@macroflow.com"
+                value={email}
+                onChange={setEmail}
+                autoComplete="email"
+              />
+
+              <FormInput
+                label="Password"
+                type="password"
+                placeholder="••••••••••••"
+                value={password}
+                onChange={setPassword}
+                autoComplete={mode === "signin" ? "current-password" : "new-password"}
+              />
 
               {mode === "register" && (
-                <FormInput label="Invite code" placeholder="Optional for early access" />
+                <FormInput
+                  label="Invite code"
+                  placeholder="Optional for early access"
+                  value={inviteCode}
+                  onChange={setInviteCode}
+                />
               )}
+
+              {errorText ? (
+                <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                  {errorText}
+                </div>
+              ) : null}
+
+              {successText ? (
+                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+                  {successText}
+                </div>
+              ) : null}
 
               <motion.button
                 whileHover={{ y: -1, scale: 1.01 }}
                 whileTap={{ scale: 0.995 }}
                 type="submit"
-                className="group relative mt-2 inline-flex w-full items-center justify-center overflow-hidden rounded-xl border border-cyan-300/12 bg-[linear-gradient(90deg,rgba(8,145,178,0.75),rgba(37,99,235,0.72),rgba(79,70,229,0.68))] px-4 py-3.5 text-sm font-medium text-white shadow-[0_10px_35px_rgba(8,145,178,0.14)]"
+                disabled={loading}
+                className="group relative mt-2 inline-flex w-full items-center justify-center overflow-hidden rounded-xl border border-cyan-300/12 bg-[linear-gradient(90deg,rgba(8,145,178,0.75),rgba(37,99,235,0.72),rgba(79,70,229,0.68))] px-4 py-3.5 text-sm font-medium text-white shadow-[0_10px_35px_rgba(8,145,178,0.14)] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <span className="absolute inset-0 -translate-x-full bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.14),transparent)] transition duration-1000 group-hover:translate-x-full" />
                 <span className="relative z-10">
-                  {mode === "signin" ? "Enter MacroFlow" : "Request access"}
+                  {loading
+                    ? "Please wait..."
+                    : mode === "signin"
+                      ? "Enter MacroFlow"
+                      : "Create account"}
                   <span className="ml-2 inline-block transition group-hover:translate-x-0.5">→</span>
                 </span>
               </motion.button>

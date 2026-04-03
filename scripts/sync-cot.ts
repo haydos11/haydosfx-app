@@ -1,7 +1,5 @@
-import dotenv from "dotenv";
-import { syncCotReports } from "../lib/cot/pipeline/sync";
-
-dotenv.config({ path: ".env.local" });
+import "dotenv/config";
+import { syncCotReports } from "@/lib/cot/pipeline/sync";
 
 async function main() {
   const result = await syncCotReports("manual-script");

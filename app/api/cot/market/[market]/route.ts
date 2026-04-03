@@ -129,6 +129,7 @@ function calcReactionType(
 }
 
 type UnifiedDbRow = {
+  market_code?: string | null;
   report_date: string;
   category: string | null;
   price_symbol: string | null;
@@ -161,6 +162,19 @@ type UnifiedDbRow = {
   net_nonreportable_usd: number | null;
 };
 
+type FxNotionalRow = {
+  report_date: string;
+  long_noncommercial_usd: number | null;
+  short_noncommercial_usd: number | null;
+  net_noncommercial_usd: number | null;
+  long_commercial_usd: number | null;
+  short_commercial_usd: number | null;
+  net_commercial_usd: number | null;
+  long_nonreportable_usd: number | null;
+  short_nonreportable_usd: number | null;
+  net_nonreportable_usd: number | null;
+};
+
 type FxReactionRow = {
   report_date: string;
   position_bias: string | null;
@@ -178,6 +192,186 @@ type PriceRow = {
   price_date: string;
   close: number | null;
 };
+
+async function tryLoadLegacyRows(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  dbCode: string,
+  startDate: string | null
+): Promise<{ rows: UnifiedDbRow[]; usedLegacy: boolean }> {
+  let query = supabase
+    .from("cot_all_usd_notional")
+    .select(`
+      market_code,
+      report_date,
+      category,
+      price_symbol,
+      report_price,
+      long_noncommercial,
+      short_noncommercial,
+      net_noncommercial,
+      long_commercial,
+      short_commercial,
+      net_commercial,
+      long_nonreportable,
+      short_nonreportable,
+      net_nonreportable,
+      oi_total,
+      long_noncommercial_usd,
+      short_noncommercial_usd,
+      net_noncommercial_usd,
+      long_commercial_usd,
+      short_commercial_usd,
+      net_commercial_usd,
+      long_nonreportable_usd,
+      short_nonreportable_usd,
+      net_nonreportable_usd
+    `)
+    .eq("market_code", dbCode)
+    .order("report_date", { ascending: true });
+
+  if (startDate) {
+    query = query.gte("report_date", startDate);
+  }
+
+  const { data, error } = await query;
+
+  if (!error) {
+    return { rows: (data ?? []) as UnifiedDbRow[], usedLegacy: true };
+  }
+
+  const msg = error.message || "";
+  const isMissingCompatView =
+    msg.includes("cot_all_usd_notional") ||
+    msg.includes("Could not find the table") ||
+    msg.includes("schema cache");
+
+  if (!isMissingCompatView) {
+    throw new Error(error.message);
+  }
+
+  return { rows: [], usedLegacy: false };
+}
+
+async function loadRowsFallback(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  dbCode: string,
+  startDate: string | null,
+  isFx: boolean
+): Promise<UnifiedDbRow[]> {
+  let reportsQuery = supabase
+    .from("cot_reports")
+    .select(`
+      market_code,
+      report_date,
+      long_noncommercial,
+      short_noncommercial,
+      net_noncommercial,
+      long_commercial,
+      short_commercial,
+      net_commercial,
+      long_nonreportable,
+      short_nonreportable,
+      net_nonreportable,
+      oi_total
+    `)
+    .eq("market_code", dbCode)
+    .order("report_date", { ascending: true });
+
+  if (startDate) {
+    reportsQuery = reportsQuery.gte("report_date", startDate);
+  }
+
+  const { data: reportsData, error: reportsError } = await reportsQuery;
+  if (reportsError) {
+    throw new Error(`cot_reports fallback failed: ${reportsError.message}`);
+  }
+
+  const baseRows = ((reportsData ?? []) as Partial<UnifiedDbRow>[]).map((row) => ({
+    market_code: row.market_code ?? dbCode,
+    report_date: row.report_date ?? "",
+    category: null,
+    price_symbol: null,
+    report_price: null,
+
+    long_noncommercial: toNum(row.long_noncommercial),
+    short_noncommercial: toNum(row.short_noncommercial),
+    net_noncommercial: toNum(row.net_noncommercial),
+
+    long_commercial: toNum(row.long_commercial),
+    short_commercial: toNum(row.short_commercial),
+    net_commercial: toNum(row.net_commercial),
+
+    long_nonreportable: toNum(row.long_nonreportable),
+    short_nonreportable: toNum(row.short_nonreportable),
+    net_nonreportable: toNum(row.net_nonreportable),
+
+    oi_total: toNum(row.oi_total),
+
+    long_noncommercial_usd: null,
+    short_noncommercial_usd: null,
+    net_noncommercial_usd: null,
+
+    long_commercial_usd: null,
+    short_commercial_usd: null,
+    net_commercial_usd: null,
+
+    long_nonreportable_usd: null,
+    short_nonreportable_usd: null,
+    net_nonreportable_usd: null,
+  })) satisfies UnifiedDbRow[];
+
+  if (!isFx || !baseRows.length) {
+    return baseRows;
+  }
+
+  let fxNotionalQuery = supabase
+    .from("cot_fx_usd_notional")
+    .select(`
+      report_date,
+      long_noncommercial_usd,
+      short_noncommercial_usd,
+      net_noncommercial_usd,
+      long_commercial_usd,
+      short_commercial_usd,
+      net_commercial_usd,
+      long_nonreportable_usd,
+      short_nonreportable_usd,
+      net_nonreportable_usd
+    `)
+    .eq("market_code", dbCode)
+    .order("report_date", { ascending: true });
+
+  if (startDate) {
+    fxNotionalQuery = fxNotionalQuery.gte("report_date", startDate);
+  }
+
+  const { data: fxNotionalData, error: fxNotionalError } = await fxNotionalQuery;
+  if (fxNotionalError) {
+    throw new Error(`cot_fx_usd_notional fallback failed: ${fxNotionalError.message}`);
+  }
+
+  const fxMap = new Map<string, FxNotionalRow>(
+    ((fxNotionalData ?? []) as FxNotionalRow[]).map((r) => [isoDate(r.report_date), r])
+  );
+
+  return baseRows.map((row) => {
+    const fx = fxMap.get(isoDate(row.report_date));
+    return {
+      ...row,
+      long_noncommercial_usd: toNum(fx?.long_noncommercial_usd),
+      short_noncommercial_usd: toNum(fx?.short_noncommercial_usd),
+      net_noncommercial_usd: toNum(fx?.net_noncommercial_usd),
+
+      long_commercial_usd: toNum(fx?.long_commercial_usd),
+      short_commercial_usd: toNum(fx?.short_commercial_usd),
+      net_commercial_usd: toNum(fx?.net_commercial_usd),
+
+      long_nonreportable_usd: toNum(fx?.long_nonreportable_usd),
+      short_nonreportable_usd: toNum(fx?.short_nonreportable_usd),
+      net_nonreportable_usd: toNum(fx?.net_nonreportable_usd),
+    };
+  });
+}
 
 export async function GET(
   req: NextRequest,
@@ -198,10 +392,7 @@ export async function GET(
 
     const dbCode = MARKET_KEY_TO_DB_CODE[info.key];
     if (!dbCode) {
-      return NextResponse.json(
-        { error: "No DB mapping for market" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "No DB mapping for market" }, { status: 404 });
     }
 
     const isFx = FX_DB_CODES.has(dbCode);
@@ -210,44 +401,11 @@ export async function GET(
 
     const supabase = getSupabaseAdmin();
 
-    let query = supabase
-      .from("cot_all_usd_notional")
-      .select(`
-        report_date,
-        category,
-        price_symbol,
-        report_price,
-        long_noncommercial,
-        short_noncommercial,
-        net_noncommercial,
-        long_commercial,
-        short_commercial,
-        net_commercial,
-        long_nonreportable,
-        short_nonreportable,
-        net_nonreportable,
-        oi_total,
-        long_noncommercial_usd,
-        short_noncommercial_usd,
-        net_noncommercial_usd,
-        long_commercial_usd,
-        short_commercial_usd,
-        net_commercial_usd,
-        long_nonreportable_usd,
-        short_nonreportable_usd,
-        net_nonreportable_usd
-      `)
-      .eq("market_code", dbCode)
-      .order("report_date", { ascending: true });
-
-    if (startDate) {
-      query = query.gte("report_date", startDate);
-    }
-
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-
-    const rows = (data ?? []) as UnifiedDbRow[];
+    const legacyAttempt = await tryLoadLegacyRows(supabase, dbCode, startDate);
+    const rows =
+      legacyAttempt.usedLegacy
+        ? legacyAttempt.rows
+        : await loadRowsFallback(supabase, dbCode, startDate, isFx);
 
     if (!rows.length) {
       return NextResponse.json({ error: "No rows found" }, { status: 404 });
@@ -280,10 +438,7 @@ export async function GET(
       if (reactionError) throw new Error(reactionError.message);
 
       reactionMap = new Map(
-        ((reactionRows ?? []) as FxReactionRow[]).map((r) => [
-          isoDate(r.report_date),
-          r,
-        ])
+        ((reactionRows ?? []) as FxReactionRow[]).map((r) => [isoDate(r.report_date), r])
       );
     }
 
@@ -385,8 +540,7 @@ export async function GET(
         const fxMovePct = calcMovePct(fxReportPrice, fxReleasePrice);
         const fxDirection = calcPriceDirection(fxMovePct);
         const fxBias =
-          (rxn?.position_bias as "bullish" | "bearish" | "neutral" | null) ??
-          baseBias;
+          (rxn?.position_bias as "bullish" | "bearish" | "neutral" | null) ?? baseBias;
         const fxReaction = calcReactionType(fxBias, fxMovePct);
 
         report_price.push(fxReportPrice);
@@ -438,8 +592,7 @@ export async function GET(
           const fxMovePct = calcMovePct(fxReportPrice, fxReleasePrice);
           const fxDirection = calcPriceDirection(fxMovePct);
           const fxBias =
-            (rxn?.position_bias as "bullish" | "bearish" | "neutral" | null) ??
-            baseBias;
+            (rxn?.position_bias as "bullish" | "bearish" | "neutral" | null) ?? baseBias;
           const fxReaction = calcReactionType(fxBias, fxMovePct);
 
           return {
@@ -570,7 +723,6 @@ export async function GET(
       };
     });
 
-    // Legacy shape kept for older currency strength chart compatibility
     const points = dates.map((date, i) => ({
       date,
       netNotionalUSD: large_usd[i] ?? null,
@@ -578,7 +730,6 @@ export async function GET(
 
     return NextResponse.json({
       points,
-
       market: {
         key: info.key,
         code: info.code,
@@ -611,6 +762,8 @@ export async function GET(
       recent,
       updated: new Date().toISOString(),
       range: {
+        from: dates[0] ?? null,
+        to: dates[dates.length - 1] ?? null,
         label: range,
       },
     });

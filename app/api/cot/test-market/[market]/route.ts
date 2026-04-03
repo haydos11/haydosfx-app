@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveMarket } from "@/lib/cot/markets";
+import { requireApiPremium } from "@/lib/auth/require-api-premium";
 
 const MARKET_KEY_TO_DB_CODE: Record<string, string> = {
   eur: "6E",
@@ -133,6 +134,9 @@ export async function GET(
   context: { params: Promise<{ market: string }> }
 ) {
   try {
+    const gate = await requireApiPremium();
+    if (!gate.ok) return gate.response;
+    
     const { market } = await context.params;
 
     if (!market) {

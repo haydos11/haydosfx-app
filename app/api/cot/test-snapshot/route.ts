@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { MARKETS, type MarketInfo } from "@/lib/cot/markets";
+import { requireApiPremium } from "@/lib/auth/require-api-premium";
 
 type SnapshotRow = {
   market_code: string;
@@ -138,6 +139,9 @@ function toNum(v: unknown): number | null {
 
 export async function GET() {
   try {
+    const gate = await requireApiPremium();
+    if (!gate.ok) return gate.response;
+    
     const supabase = getSupabaseAdmin();
 
     const { data, error } = await supabase
