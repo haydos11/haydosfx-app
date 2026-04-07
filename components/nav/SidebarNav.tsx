@@ -12,6 +12,7 @@ import {
   ArrowLeft,
   Zap,
   LayoutDashboard,
+  Shield,
 } from "lucide-react";
 import { Icon as Iconify } from "@iconify/react";
 
@@ -34,6 +35,13 @@ const LEARN = {
   label: "Learn",
   emoji: "🎓",
   sub: "Core Foundations",
+};
+
+/* ---- Admin item ---- */
+const ADMIN = {
+  href: "/admin/cot-digest",
+  label: "Admin",
+  icon: Shield,
 };
 
 /* ---- sub-nav: Calendar (Lucide) ---- */
@@ -89,6 +97,9 @@ export default function SidebarNav() {
   const inLearn =
     pathname === LEARN.href || pathname.startsWith(LEARN.href + "/");
 
+  const inAdmin =
+    pathname === ADMIN.href || pathname.startsWith(ADMIN.href + "/");
+
   return (
     <aside
       className={`${WIDTH} shrink-0 border-r border-white/10 bg-[#0b0b0b] transition-all duration-300 h-screen flex flex-col min-h-0`}
@@ -117,7 +128,7 @@ export default function SidebarNav() {
         </div>
       </div>
 
-      <nav className="px-2 pb-8 overflow-y-auto min-h-0 flex-1">
+      <nav className="px-2 pb-4 overflow-y-auto min-h-0 flex-1">
         {/* ===== MAIN NAV ===== */}
         <ul className={ITEM_SPACE}>
           {MAIN.map(({ href, label, emoji, icon: Icon }: any) => {
@@ -148,9 +159,9 @@ export default function SidebarNav() {
           })}
 
           {/* ===== SIMPLE DIVIDER ABOVE LEARN ===== */}
-<li className="pt-3 pb-2">
-  <div className="mx-1 border-t border-white/10" />
-</li>
+          <li className="pt-3 pb-2">
+            <div className="mx-1 border-t border-white/10" />
+          </li>
 
           {/* ===== LEARN ===== */}
           <li>
@@ -280,6 +291,26 @@ export default function SidebarNav() {
           </>
         )}
       </nav>
+
+      {/* ===== DISCREET ADMIN ACCESS ===== */}
+      <div className="shrink-0 px-2 pb-3">
+        <div className="mx-1 mb-2 border-t border-white/10" />
+        <Link
+          href={ADMIN.href}
+          className={[
+            "flex items-center rounded-md transition-colors text-slate-500 hover:text-white hover:bg-white/5",
+            collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3.5 py-2.5",
+            inAdmin ? "text-white bg-white/5" : "",
+          ].join(" ")}
+          title={collapsed ? ADMIN.label : ""}
+          aria-label={ADMIN.label}
+        >
+          <ADMIN.icon size={16} />
+          {!collapsed && (
+            <span className="whitespace-nowrap text-sm">Admin</span>
+          )}
+        </Link>
+      </div>
     </aside>
   );
 }

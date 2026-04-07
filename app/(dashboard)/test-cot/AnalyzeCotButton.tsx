@@ -19,6 +19,10 @@ type AnalyzeRequest = {
   click: true;
   force: boolean;
   noStyle: true;
+  asset: string;
+  code: string;
+  latestDate?: string | null;
+  inputSnapshot: CotAnalysisInput;
   testPrompt?: string;
 };
 
@@ -393,10 +397,15 @@ export default function AnalyzeCotButton({
       setError(null);
 
       const testPrompt = buildLeanPrompt(input);
+
       const body: AnalyzeRequest = {
         click: true,
         force: forceRefresh,
         noStyle: true,
+        asset: input.asset,
+        code: input.code,
+        latestDate: input.latestDate ?? null,
+        inputSnapshot: input,
         testPrompt,
       };
 

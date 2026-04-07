@@ -137,11 +137,19 @@ function toNum(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const gate = await requireApiPremium();
-    if (!gate.ok) return gate.response;
-    
+    const adminToken = process.env.ANALYSIS_ADMIN_TOKEN;
+    const providedToken = request.headers.get("x-analysis-token");
+
+    const isInternalAdminCall =
+      Boolean(adminToken) && providedToken === adminToken;
+
+    if (!isInternalAdminCall) {
+      const gate = await requireApiPremium();
+      if (!gate.ok) return gate.response;
+    }
+
     const supabase = getSupabaseAdmin();
 
     const { data, error } = await supabase
