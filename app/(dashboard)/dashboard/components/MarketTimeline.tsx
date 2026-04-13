@@ -55,6 +55,8 @@ type RawCalendarRow = {
 };
 
 const WATCHLIST_STORAGE_KEY = "haydosfx-upcoming-events-watchlist";
+const LONDON_TZ = "Europe/London";
+const DATE_LOCALE = "en-GB";
 
 function first<T>(x: T | T[] | null | undefined): T | null {
   return Array.isArray(x) ? (x[0] ?? null) : (x ?? null);
@@ -113,31 +115,55 @@ function getUtcWeekRange(now = new Date()) {
   };
 }
 
+function formatParts(
+  date: Date,
+  options: Intl.DateTimeFormatOptions
+): Record<string, string> {
+  const parts = new Intl.DateTimeFormat(DATE_LOCALE, {
+    ...options,
+    timeZone: LONDON_TZ,
+  }).formatToParts(date);
+
+  return parts.reduce<Record<string, string>>((acc, part) => {
+    if (part.type !== "literal") {
+      acc[part.type] = part.value;
+    }
+    return acc;
+  }, {});
+}
+
 function formatClock(iso: string) {
-  return new Date(iso).toLocaleTimeString([], {
+  const p = formatParts(new Date(iso), {
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
   });
+
+  return `${p.hour ?? "--"}:${p.minute ?? "--"}`;
 }
 
 function formatShortDay(iso: string) {
-  return new Date(iso).toLocaleDateString([], {
+  const p = formatParts(new Date(iso), {
     weekday: "short",
-    day: "numeric",
+    day: "2-digit",
     month: "short",
   });
+
+  return `${p.weekday ?? ""} ${p.day ?? ""} ${p.month ?? ""}`.trim();
 }
 
-function formatHeaderDay() {
-  return new Date().toLocaleDateString([], {
+function formatHeaderDay(nowMs: number) {
+  const p = formatParts(new Date(nowMs), {
     weekday: "short",
-    day: "numeric",
+    day: "2-digit",
     month: "short",
   });
+
+  return `${p.weekday ?? ""} ${p.day ?? ""} ${p.month ?? ""}`.trim();
 }
 
-function getTimeUntilLabel(iso: string) {
-  const diffMs = new Date(iso).getTime() - Date.now();
+function getTimeUntilLabel(iso: string, nowMs: number) {
+  const diffMs = new Date(iso).getTime() - nowMs;
   const diffMin = Math.round(diffMs / 60000);
 
   if (diffMin <= 0) return "Now";
@@ -150,8 +176,8 @@ function getTimeUntilLabel(iso: string) {
   return `in ${hours}h ${mins}m`;
 }
 
-function getMinutesUntil(iso: string) {
-  return Math.round((new Date(iso).getTime() - Date.now()) / 60000);
+function getMinutesUntil(iso: string, nowMs: number) {
+  return Math.round((new Date(iso).getTime() - nowMs) / 60000);
 }
 
 function impactLabel(importance: ImpactLevel) {
@@ -180,14 +206,13 @@ function impactClasses(importance: ImpactLevel) {
   };
 }
 
-function buildProgressWidth(iso: string, rangeMode: RangeMode) {
-  const now = Date.now();
+function buildProgressWidth(iso: string, rangeMode: RangeMode, nowMs: number) {
   const target = new Date(iso).getTime();
 
-  if (target <= now) return 100;
+  if (target <= nowMs) return 100;
 
   const totalMinutes = rangeMode === "today" ? 24 * 60 : 7 * 24 * 60;
-  const diffMinutes = Math.max(0, Math.round((target - now) / 60000));
+  const diffMinutes = Math.max(0, Math.round((target - nowMs) / 60000));
   const elapsed = totalMinutes - diffMinutes;
   const pct = Math.max(0, Math.min(100, (elapsed / totalMinutes) * 100));
 
@@ -299,14 +324,19 @@ function StarIcon({ filled }: { filled: boolean }) {
 }
 
 export default function UpcomingEvents() {
+  const [mounted, setMounted] = useState(false);
   const [rangeMode, setRangeMode] = useState<RangeMode>("today");
   const [items, setItems] = useState<UpcomingEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [nowTick, setNowTick] = useState(Date.now());
+
+  // Start from a stable value so SSR and client initial render match.
+  const [nowTick, setNowTick] = useState(0);
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    setMounted(true);
+    setNowTick(Date.now());
     setWatchlist(loadWatchlist());
   }, []);
 
@@ -342,12 +372,16 @@ export default function UpcomingEvents() {
   }, [rangeMode]);
 
   useEffect(() => {
+    if (!mounted) return;
+
     const timer = window.setInterval(() => {
       setNowTick(Date.now());
     }, 30_000);
 
     return () => window.clearInterval(timer);
-  }, []);
+  }, [mounted]);
+
+  const displayNowMs = mounted && nowTick > 0 ? nowTick : 0;
 
   const toggleWatch = (id: string) => {
     setWatchlist((prev) => {
@@ -388,9 +422,13 @@ export default function UpcomingEvents() {
   }, [sortedItems]);
 
   const todayCount = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today =
+      displayNowMs > 0
+        ? new Date(displayNowMs).toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+
     return sortedItems.filter((item) => item.timeIso.slice(0, 10) === today).length;
-  }, [sortedItems]);
+  }, [sortedItems, displayNowMs]);
 
   const watchedCount = useMemo(() => {
     return sortedItems.filter((item) => watchlist.has(item.id)).length;
@@ -422,7 +460,7 @@ export default function UpcomingEvents() {
         </div>
 
         <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-slate-300">
-          {formatHeaderDay()}
+          {displayNowMs > 0 ? formatHeaderDay(displayNowMs) : "—"}
         </div>
       </div>
 
@@ -470,7 +508,9 @@ export default function UpcomingEvents() {
               Next Event
             </div>
             <div className="mt-1 text-sm font-medium text-white">
-              {nextAny ? getTimeUntilLabel(nextAny.timeIso) : "—"}
+              {nextAny && displayNowMs > 0
+                ? getTimeUntilLabel(nextAny.timeIso, displayNowMs)
+                : "—"}
             </div>
           </div>
 
@@ -511,7 +551,10 @@ export default function UpcomingEvents() {
                 {nextHighImpact || nextAny
                   ? formatShortDay((nextHighImpact ?? nextAny)!.timeIso)
                   : "—"}{" "}
-                • {nextHighImpact || nextAny ? formatClock((nextHighImpact ?? nextAny)!.timeIso) : "—"}
+                •{" "}
+                {nextHighImpact || nextAny
+                  ? formatClock((nextHighImpact ?? nextAny)!.timeIso)
+                  : "—"}
               </div>
             </div>
 
@@ -520,9 +563,11 @@ export default function UpcomingEvents() {
                 <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
                   Countdown
                 </div>
-                <div key={nowTick} className="mt-1 text-sm font-medium text-white">
+                <div className="mt-1 text-sm font-medium text-white">
                   {nextHighImpact || nextAny
-                    ? getTimeUntilLabel((nextHighImpact ?? nextAny)!.timeIso)
+                    ? displayNowMs > 0
+                      ? getTimeUntilLabel((nextHighImpact ?? nextAny)!.timeIso, displayNowMs)
+                      : "—"
                     : "—"}
                 </div>
               </div>
@@ -542,7 +587,12 @@ export default function UpcomingEvents() {
                 </div>
                 <div className="mt-1 text-sm font-medium text-white">
                   {nextHighImpact || nextAny
-                    ? `${Math.max(0, getMinutesUntil((nextHighImpact ?? nextAny)!.timeIso))}m`
+                    ? displayNowMs > 0
+                      ? `${Math.max(
+                          0,
+                          getMinutesUntil((nextHighImpact ?? nextAny)!.timeIso, displayNowMs)
+                        )}m`
+                      : "—"
                     : "—"}
                 </div>
               </div>
@@ -588,12 +638,16 @@ export default function UpcomingEvents() {
                 <div>
                   <div className="mb-1 flex items-center justify-between text-[11px] text-slate-400">
                     <span>High impact</span>
-                    <span>{sortedItems.length ? Math.round((totalHigh / sortedItems.length) * 100) : 0}%</span>
+                    <span>
+                      {sortedItems.length ? Math.round((totalHigh / sortedItems.length) * 100) : 0}%
+                    </span>
                   </div>
                   <div className="h-2 rounded-full bg-white/5">
                     <div
                       className="h-2 rounded-full bg-gradient-to-r from-rose-400 to-fuchsia-400"
-                      style={{ width: `${sortedItems.length ? (totalHigh / sortedItems.length) * 100 : 0}%` }}
+                      style={{
+                        width: `${sortedItems.length ? (totalHigh / sortedItems.length) * 100 : 0}%`,
+                      }}
                     />
                   </div>
                 </div>
@@ -601,12 +655,19 @@ export default function UpcomingEvents() {
                 <div>
                   <div className="mb-1 flex items-center justify-between text-[11px] text-slate-400">
                     <span>Moderate impact</span>
-                    <span>{sortedItems.length ? Math.round((totalModerate / sortedItems.length) * 100) : 0}%</span>
+                    <span>
+                      {sortedItems.length
+                        ? Math.round((totalModerate / sortedItems.length) * 100)
+                        : 0}
+                      %
+                    </span>
                   </div>
                   <div className="h-2 rounded-full bg-white/5">
                     <div
                       className="h-2 rounded-full bg-gradient-to-r from-amber-300 to-yellow-500"
-                      style={{ width: `${sortedItems.length ? (totalModerate / sortedItems.length) * 100 : 0}%` }}
+                      style={{
+                        width: `${sortedItems.length ? (totalModerate / sortedItems.length) * 100 : 0}%`,
+                      }}
                     />
                   </div>
                 </div>
@@ -614,12 +675,16 @@ export default function UpcomingEvents() {
                 <div>
                   <div className="mb-1 flex items-center justify-between text-[11px] text-slate-400">
                     <span>Watchlist</span>
-                    <span>{sortedItems.length ? Math.round((watchedCount / sortedItems.length) * 100) : 0}%</span>
+                    <span>
+                      {sortedItems.length ? Math.round((watchedCount / sortedItems.length) * 100) : 0}%
+                    </span>
                   </div>
                   <div className="h-2 rounded-full bg-white/5">
                     <div
                       className="h-2 rounded-full bg-gradient-to-r from-yellow-300 to-orange-400"
-                      style={{ width: `${sortedItems.length ? (watchedCount / sortedItems.length) * 100 : 0}%` }}
+                      style={{
+                        width: `${sortedItems.length ? (watchedCount / sortedItems.length) * 100 : 0}%`,
+                      }}
                     />
                   </div>
                 </div>
@@ -710,7 +775,11 @@ export default function UpcomingEvents() {
               <div className="space-y-2">
                 {dayItems.slice(0, rangeMode === "today" ? 10 : 30).map((item) => {
                   const styles = impactClasses(item.importance);
-                  const progressWidth = buildProgressWidth(item.timeIso, rangeMode);
+                  const progressWidth = buildProgressWidth(
+                    item.timeIso,
+                    rangeMode,
+                    displayNowMs || Date.now()
+                  );
                   const isWatched = watchlist.has(item.id);
 
                   return (
@@ -770,7 +839,9 @@ export default function UpcomingEvents() {
                                 <span className="text-slate-600">•</span>
                                 <span>{item.currency || "—"}</span>
                                 <span className="text-slate-600">•</span>
-                                <span key={nowTick}>{getTimeUntilLabel(item.timeIso)}</span>
+                                <span>
+                                  {displayNowMs > 0 ? getTimeUntilLabel(item.timeIso, displayNowMs) : "—"}
+                                </span>
                               </div>
                             </div>
                           </div>
@@ -782,8 +853,8 @@ export default function UpcomingEvents() {
                               <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
                                 Countdown
                               </div>
-                              <div key={nowTick} className="mt-1 text-sm font-semibold text-white">
-                                {getTimeUntilLabel(item.timeIso)}
+                              <div className="mt-1 text-sm font-semibold text-white">
+                                {displayNowMs > 0 ? getTimeUntilLabel(item.timeIso, displayNowMs) : "—"}
                               </div>
                             </div>
 
@@ -792,7 +863,10 @@ export default function UpcomingEvents() {
                                 Minutes
                               </div>
                               <div className="mt-1 text-sm font-semibold text-white">
-                                {Math.max(0, getMinutesUntil(item.timeIso))}m
+                                {displayNowMs > 0
+                                  ? Math.max(0, getMinutesUntil(item.timeIso, displayNowMs))
+                                  : "—"}
+                                {displayNowMs > 0 ? "m" : ""}
                               </div>
                             </div>
 

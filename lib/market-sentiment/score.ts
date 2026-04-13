@@ -26,6 +26,22 @@ function nearestAtOrBefore(
   return best;
 }
 
+function latestRowAtOrBefore<T extends { ts: string }>(
+  rows: T[],
+  targetMs: number
+): T | null {
+  let best: T | null = null;
+
+  for (const row of rows) {
+    const ms = Date.parse(row.ts);
+    if (Number.isNaN(ms)) continue;
+    if (ms <= targetMs) best = row;
+    else break;
+  }
+
+  return best;
+}
+
 function londonAnchor(tsIso: string): number {
   const d = new Date(tsIso);
   return Date.UTC(
@@ -98,7 +114,7 @@ function fmtSigned(value: number | null | undefined, digits = 2): string {
 function topDrivers(components: Record<string, SnapshotComponent>) {
   return Object.entries(components)
     .sort((a, b) => Math.abs(b[1].score) - Math.abs(a[1].score))
-    .slice(0, 3)
+    .slice(0, 4)
     .map(([code, comp]) => ({
       code,
       direction: comp.direction,
@@ -231,16 +247,19 @@ export function buildSnapshotRows(
   }
 
   const timestamps = Array.from(timestampSet).sort();
-  const rowMapsByAsset: Record<string, Map<string, IntradayPriceRow>> = {};
 
+  const sortedRowsByAsset: Record<string, IntradayPriceRow[]> = {};
   for (const asset of MARKET_SENTIMENT_ASSETS) {
-    const rows = priceRowsByAsset[asset.code] ?? [];
-    rowMapsByAsset[asset.code] = new Map(rows.map((row) => [row.ts, row]));
+    sortedRowsByAsset[asset.code] = [...(priceRowsByAsset[asset.code] ?? [])].sort((a, b) =>
+      a.ts.localeCompare(b.ts)
+    );
   }
 
   const snapshots: IntradaySnapshotRow[] = [];
 
   for (const ts of timestamps) {
+    const currentMs = Date.parse(ts);
+
     let score = 0;
     let breadthAligned = 0;
     let breadthTotal = 0;
@@ -248,7 +267,7 @@ export function buildSnapshotRows(
     const components: Record<string, SnapshotComponent> = {};
 
     for (const asset of MARKET_SENTIMENT_ASSETS) {
-      const row = rowMapsByAsset[asset.code]?.get(ts);
+      const row = latestRowAtOrBefore(sortedRowsByAsset[asset.code] ?? [], currentMs);
       if (!row) continue;
 
       const basis =
@@ -261,19 +280,26 @@ export function buildSnapshotRows(
       let componentScore = 0;
       let direction: SnapshotComponent["direction"] = "neutral";
 
-      if (basis != null && asset.polarity !== 0) {
-        const signed = basis * asset.polarity;
+      if (basis != null) {
+        if (asset.polarity === 0) {
+          // Rates are context-only for now: visible, but not directly scored.
+          componentScore = 0;
+          direction = "neutral";
+          breadthTotal += 1;
+        } else {
+          const signed = basis * asset.polarity;
 
-        if (signed > 0) {
-          componentScore = asset.weight;
-          direction = "risk_on";
-          breadthAligned += 1;
-        } else if (signed < 0) {
-          componentScore = -asset.weight;
-          direction = "risk_off";
+          if (signed > 0) {
+            componentScore = asset.weight;
+            direction = "risk_on";
+            breadthAligned += 1;
+          } else if (signed < 0) {
+            componentScore = -asset.weight;
+            direction = "risk_off";
+          }
+
+          breadthTotal += 1;
         }
-
-        breadthTotal += 1;
       }
 
       score += componentScore;
@@ -295,28 +321,17 @@ export function buildSnapshotRows(
     const previousScoreChange = prevSnapshot ? score - prevSnapshot.score : null;
 
     const snapshotIndex = snapshots.map((s) => ({ ts: s.ts, score: s.score }));
-    const currentMs = Date.parse(ts);
 
-    const londonReferenceScore = scoreLookupAtOrBefore(
-      snapshotIndex,
-      londonAnchor(ts)
-    );
-
-    const sessionReferenceScore = scoreLookupAtOrBefore(
-      snapshotIndex,
-      sessionAnchor(ts)
-    );
-
+    const londonReferenceScore = scoreLookupAtOrBefore(snapshotIndex, londonAnchor(ts));
+    const sessionReferenceScore = scoreLookupAtOrBefore(snapshotIndex, sessionAnchor(ts));
     const previousDaySameTimeReferenceScore = scoreLookupAtOrBefore(
       snapshotIndex,
       currentMs - 24 * 60 * 60 * 1000
     );
-
     const rolling2hReferenceScore = scoreLookupAtOrBefore(
       snapshotIndex,
       currentMs - 2 * 60 * 60 * 1000
     );
-
     const rolling4hReferenceScore = scoreLookupAtOrBefore(
       snapshotIndex,
       currentMs - 4 * 60 * 60 * 1000
