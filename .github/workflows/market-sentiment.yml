@@ -1,0 +1,17 @@
+name: Market Sentiment Intraday
+
+on:
+  schedule:
+    - cron: "*/15 * * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call market sentiment route
+        run: |
+          curl -L \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://app.haydosfx.com/api/cron/sync-market-sentiment-intraday?range=2d"

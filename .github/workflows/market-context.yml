@@ -1,0 +1,17 @@
+name: Market Context Prices
+
+on:
+  schedule:
+    - cron: "10 22 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call market context route
+        run: |
+          curl -L \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://app.haydosfx.com/api/cron/sync-market-context-prices"
