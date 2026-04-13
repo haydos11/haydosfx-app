@@ -81,7 +81,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         ok: false,
-        job: "sync-market-context-prices",
+        job: "sync-market-context-prices", 
         error: message,
       },
       { status: 500 }
