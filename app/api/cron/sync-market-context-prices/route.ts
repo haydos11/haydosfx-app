@@ -7,12 +7,27 @@ export const maxDuration = 300;
 
 function isAuthorized(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
+  const vercelCronHeader = req.headers.get("x-vercel-cron");
 
+  console.log("[cron auth debug][market-context]", {
+    hasCronSecret: !!cronSecret,
+    authHeaderPresent: !!authHeader,
+    authHeaderPreview: authHeader ? `${authHeader.slice(0, 20)}...` : null,
+    xVercelCron: vercelCronHeader,
+    nodeEnv: process.env.NODE_ENV,
+  });
+
+  // Allow Vercel Cron requests
+  if (vercelCronHeader === "1") {
+    return true;
+  }
+
+  // Allow manual requests with Bearer token
   if (!cronSecret) {
     return false;
   }
 
-  const authHeader = req.headers.get("authorization");
   return authHeader === `Bearer ${cronSecret}`;
 }
 
@@ -43,6 +58,7 @@ export async function GET(req: NextRequest) {
     );
 
     return NextResponse.json({
+      ok: true,
       job: "sync-market-context-prices",
       startedAt,
       finishedAt,

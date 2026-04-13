@@ -4,6 +4,14 @@
     {
       "path": "/api/cron/sync-cot",
       "schedule": "15 22 * * *"
+    },
+    {
+      "path": "/api/cron/sync-market-context-prices",
+      "schedule": "10 22 * * 1-5"
+    },
+    {
+      "path": "/api/cron/sync-market-sentiment-intraday?range=2d",
+      "schedule": "*/15 * * * 1-5"
     }
   ]
 }
