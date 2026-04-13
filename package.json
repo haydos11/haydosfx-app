@@ -10,7 +10,8 @@
     "inspect:calendar": "tsx scripts/calendar/inspect-local.ts",
     "push:calendar:local": "tsx scripts/calendar/push-local.ts",
     "notes": "powershell -ExecutionPolicy Bypass -File scripts/tools/update-notes.ps1",
-    "sync:cot": "tsx scripts/sync-cot.ts"
+    "sync:cot": "tsx scripts/sync-cot.ts",
+    "sync:market-context": "tsx scripts/sync-market-context-prices.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.893.0",

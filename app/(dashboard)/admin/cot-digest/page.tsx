@@ -1,7 +1,5 @@
-import { requireAdminUser } from "@/lib/admin/require-admin";
-import CotDigestAdminPanel from "@/components/admin/CotDigestAdminPanel";
+import { redirect } from "next/navigation";
 
-export default async function CotDigestAdminPage() {
-  await requireAdminUser();
-  return <CotDigestAdminPanel />;
+export default function LegacyCotDigestAdminPage() {
+  redirect("/admin/market-research");
 }

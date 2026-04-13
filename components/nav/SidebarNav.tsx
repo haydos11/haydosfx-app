@@ -1,4 +1,3 @@
-// components/nav/SidebarNav.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -39,7 +38,7 @@ const LEARN = {
 
 /* ---- Admin item ---- */
 const ADMIN = {
-  href: "/admin/cot-digest",
+  href: "/admin",
   label: "Admin",
   icon: Shield,
 };
@@ -226,10 +225,7 @@ export default function SidebarNav() {
                         collapsed ? "justify-center" : "gap-2",
                       ].join(" ")}
                     >
-                      <Icon
-                        size={14}
-                        className={isLive ? pulseClass : ""}
-                      />
+                      <Icon size={14} className={isLive ? pulseClass : ""} />
                       {!collapsed && <span>{label}</span>}
                     </Link>
                   </li>

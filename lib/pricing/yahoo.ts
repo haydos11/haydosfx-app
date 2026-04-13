@@ -208,3 +208,73 @@ export async function yahooCloseOn(symbol: string, ymd: string): Promise<number 
   // 3) Last resort: v7 spot on the original
   return yahooSpotCached(symbol);
 }
+
+export type YahooIntradayBar = {
+  ts: string;
+  close: number;
+};
+
+type YahooChartMeta = {
+  currency?: string;
+  exchangeName?: string;
+  regularMarketPrice?: number | null;
+};
+
+type YahooChartSeriesResult = {
+  timestamp?: number[];
+  indicators?: { quote?: Array<{ close?: Array<number | null> }> };
+  meta?: YahooChartMeta;
+};
+
+type YahooSeriesResp = {
+  chart?: {
+    result?: YahooChartSeriesResult[];
+    error?: unknown;
+  };
+};
+
+export async function yahooIntradaySeries(
+  symbol: string,
+  range = "14d",
+  interval = "15m"
+): Promise<YahooIntradayBar[]> {
+  const url =
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
+    `?range=${encodeURIComponent(range)}` +
+    `&interval=${encodeURIComponent(interval)}` +
+    `&includePrePost=true&corsDomain=finance.yahoo.com`;
+
+  try {
+    const res = await fetch(url, {
+      cache: "no-store",
+      headers: { "User-Agent": "Mozilla/5.0" },
+    });
+
+    if (!res.ok) return [];
+
+    const raw: unknown = await res.json();
+    const data = raw as YahooSeriesResp;
+
+    const r = data.chart?.result?.[0];
+    const ts = r?.timestamp ?? [];
+    const closes = r?.indicators?.quote?.[0]?.close ?? [];
+
+    if (!ts.length || !closes.length) return [];
+
+    const out: YahooIntradayBar[] = [];
+
+    for (let i = 0; i < ts.length; i++) {
+      const close = closes[i];
+      if (typeof close !== "number" || !Number.isFinite(close)) continue;
+
+      out.push({
+        ts: new Date(ts[i] * 1000).toISOString(),
+        close,
+      });
+    }
+
+    return out;
+  } catch {
+    return [];
+  }
+}
