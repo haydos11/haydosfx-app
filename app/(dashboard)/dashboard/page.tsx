@@ -5,34 +5,42 @@ import CurrencyHeatmap from "./components/CurrencyHeatmap";
 import SessionRibbon from "./components/SessionRibbon";
 import MarketTimeline from "./components/MarketTimeline";
 
-function PlaceholderCard({
+function BoardCardShell({
   title,
   subtitle,
+  children,
+  minHeight = "min-h-[320px]",
 }: {
   title: string;
   subtitle: string;
+  children: React.ReactNode;
+  minHeight?: string;
 }) {
   return (
-    <div className="rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(16,18,24,0.96),rgba(10,12,18,0.96))] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
-      <div className="mb-3">
-        <h2 className="text-xl font-semibold tracking-tight text-white">{title}</h2>
+    <section className="rounded-[26px] border border-white/10 bg-[linear-gradient(180deg,rgba(16,18,24,0.98),rgba(10,12,18,0.98))] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.30)]">
+      <div className="mb-4">
+        <h2 className="text-[22px] font-semibold tracking-tight text-white">
+          {title}
+        </h2>
         <p className="mt-1 text-sm text-slate-400">{subtitle}</p>
       </div>
 
-      <div className="flex min-h-[280px] items-center justify-center rounded-[18px] border border-dashed border-white/10 bg-white/[0.02] text-sm text-white/40">
-        Coming Soon
+      <div
+        className={`rounded-[20px] border border-white/10 bg-black/20 ${minHeight} flex items-center justify-center text-sm text-white/35`}
+      >
+        {children}
       </div>
-    </div>
+    </section>
   );
 }
 
 export default function DashboardPage() {
   return (
-    <div className="min-h-screen bg-[#0a0c12]">
-      <div className="mx-auto w-full max-w-[1800px] px-4 py-5 sm:px-6 lg:px-8">
-        <div className="mb-5 flex items-center justify-between gap-4">
+    <div className="min-h-screen bg-[#07090f]">
+      <div className="mx-auto w-full max-w-[1750px] px-4 py-5 sm:px-6 xl:px-8">
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-[30px] font-semibold tracking-tight text-white">
+            <h1 className="text-[32px] font-semibold tracking-tight text-white">
               Market Dashboard
             </h1>
             <p className="mt-1 text-sm text-slate-400">
@@ -42,21 +50,30 @@ export default function DashboardPage() {
         </div>
 
         <div className="space-y-5">
-          <MarketTimeline />
-          <SessionRibbon />
+          <div className="rounded-[28px] border border-white/8 bg-white/[0.02] p-2">
+            <MarketTimeline />
+          </div>
 
-          <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[1.45fr_0.95fr]">
-            <div className="space-y-5">
-              <RiskSentiment />
-            </div>
+          <div className="rounded-[24px] border border-white/8 bg-white/[0.02] p-2">
+            <SessionRibbon />
+          </div>
 
-            <div className="space-y-5">
+          <div className="grid grid-cols-1 gap-5">
+            <RiskSentiment />
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+            <div className="rounded-[26px] border border-white/10 bg-[linear-gradient(180deg,rgba(16,18,24,0.98),rgba(10,12,18,0.98))] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.30)]">
               <CurrencyHeatmap />
-              <PlaceholderCard
-                title="Macro Board"
-                subtitle="Rates, indices, commodities, and market context overlays"
-              />
             </div>
+
+            <BoardCardShell
+              title="Macro Board"
+              subtitle="Rates, indices, commodities, and market context overlays"
+              minHeight="min-h-[360px]"
+            >
+              Coming Soon
+            </BoardCardShell>
           </div>
         </div>
       </div>

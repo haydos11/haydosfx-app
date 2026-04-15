@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import AnalyzeRiskSentimentButton, {
+  type RiskSentimentAnalysisInput,
+} from "./AnalyzeRiskSentimentButton";
 
 type SnapshotComponent = {
   score: number;
@@ -68,7 +71,7 @@ type LadderRow = {
   shortClass: string;
   assetClass: string;
   score: number;
-  normalized: number; // 0..100
+  normalized: number;
   direction: "risk_on" | "risk_off" | "neutral";
   latest: number | null;
   hour: number | null;
@@ -178,8 +181,8 @@ function summarizeMove(snapshot: Snapshot) {
   const state = snapshot.improving
     ? "improving"
     : snapshot.degrading
-    ? "softening"
-    : "holding steady";
+      ? "softening"
+      : "holding steady";
 
   return `${regime} tone, currently ${state}.`;
 }
@@ -188,14 +191,14 @@ function buildMeaning(snapshot: Snapshot) {
   const breadthPct = Math.round(snapshot.breadth * 100);
 
   if (snapshot.regime === "strong_risk_on" || snapshot.regime === "mild_risk_on") {
-    return `Markets are leaning pro-risk. Breadth is ${breadthPct}%, so the tone is constructive, but it still needs broad follow-through to stay clean.`;
+    return `Markets are leaning pro-risk. Breadth is ${breadthPct}%, so the tone is constructive, but it still needs broader follow-through to stay clean.`;
   }
 
   if (snapshot.regime === "strong_risk_off" || snapshot.regime === "mild_risk_off") {
     return `Markets are leaning defensive. Breadth is ${breadthPct}%, so safer assets have a better backdrop unless risk markets reassert themselves.`;
   }
 
-  return `Cross-asset signals are mixed. Some assets are supportive, others are pushing back, so this is not a clean one-way regime yet.`;
+  return `Cross-asset signals are mixed. Some assets support appetite while others push back, so this is not yet a clean one-way regime.`;
 }
 
 function buildTradeTake(snapshot: Snapshot) {
@@ -261,7 +264,7 @@ function boxTone(value: string) {
   return "text-slate-300";
 }
 
-export default function RiskSentiment() {
+export default function RiskSentimentLab() {
   const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [nowMs, setNowMs] = useState(0);
@@ -292,7 +295,7 @@ export default function RiskSentiment() {
     }
 
     setNowMs(Date.now());
-    load();
+    void load();
 
     const pollId = window.setInterval(load, 60_000);
     const timerId = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -320,11 +323,47 @@ export default function RiskSentiment() {
     [ladderRows]
   );
 
+  const aiInput = useMemo<RiskSentimentAnalysisInput | null>(() => {
+    if (!data?.snapshot) return null;
+
+    return {
+      regime: data.snapshot.regime,
+      score: data.snapshot.score ?? null,
+      confidence: data.snapshot.confidence ?? null,
+      breadth: data.snapshot.breadth ?? null,
+      improving: data.snapshot.improving ?? null,
+      degrading: data.snapshot.degrading ?? null,
+      previousScoreChange: data.snapshot.previous_score_change ?? null,
+      londonChangeScore: data.snapshot.london_change_score ?? null,
+      sessionChangeScore: data.snapshot.session_change_score ?? null,
+      previousDaySameTimeScoreChange:
+        data.snapshot.previous_day_same_time_score_change ?? null,
+      rolling2hScoreChange: data.snapshot.rolling_2h_score_change ?? null,
+      rolling4hScoreChange: data.snapshot.rolling_4h_score_change ?? null,
+      updatedAt: data.snapshot.ts ?? null,
+      summaryText: data.snapshot.summary_text ?? null,
+      topSupportive,
+      topDefensive,
+      ladderRows: ladderRows.map((row) => ({
+        code: row.code,
+        name: row.name,
+        assetClass: row.assetClass,
+        direction: row.direction,
+        score: row.score ?? null,
+        normalized: row.normalized ?? null,
+        latest: row.latest ?? null,
+        hour: row.hour ?? null,
+        london: row.london ?? null,
+        session: row.session ?? null,
+      })),
+    };
+  }, [data?.snapshot, ladderRows, topSupportive, topDefensive]);
+
   return (
-    <div className="rounded-[26px] border border-white/10 bg-[linear-gradient(180deg,rgba(16,18,24,0.98),rgba(10,12,18,0.98))] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.35)]">
-      <div className="mb-5 flex items-start justify-between gap-4">
+    <div className="rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(15,18,28,0.98),rgba(10,12,18,0.98))] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.35)]">
+      <div className="mb-4 flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-[28px] font-semibold tracking-tight text-white">
+          <h2 className="text-[20px] font-semibold tracking-tight text-white">
             Risk Sentiment
           </h2>
           <p className="mt-1 text-sm text-slate-400">
@@ -333,12 +372,18 @@ export default function RiskSentiment() {
         </div>
 
         <div className="text-right">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
             Next data window
           </div>
-          <div className="mt-1 text-2xl font-semibold text-slate-100">
+          <div className="mt-0.5 text-[18px] font-semibold text-slate-100">
             {countdown}
           </div>
+
+          {aiInput ? (
+            <div className="mt-2 flex justify-end">
+              <AnalyzeRiskSentimentButton input={aiInput} compact />
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -349,41 +394,41 @@ export default function RiskSentiment() {
           {data?.error ?? "No sentiment data yet"}
         </div>
       ) : (
-        <div className="space-y-5">
-          <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+        <div className="space-y-4">
+          <div className="grid gap-4 2xl:grid-cols-[0.68fr_1.32fr]">
             <div className="space-y-4">
-              <div className="rounded-[22px] border border-white/10 bg-white/[0.03] p-4">
-                <div className="mb-4 flex flex-wrap items-center gap-3">
+              <div className="rounded-[20px] border border-white/10 bg-white/[0.03] p-4">
+                <div className="mb-3 flex flex-wrap items-center gap-2.5">
                   <span
-                    className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${regimeClasses(
+                    className={`inline-flex rounded-full px-3 py-1 text-[11px] font-medium ${regimeClasses(
                       data.snapshot.regime
                     )}`}
                   >
                     {labelRegime(data.snapshot.regime)}
                   </span>
 
-                  <span className="text-xs text-slate-400">
+                  <span className="text-[11px] text-slate-400">
                     Updated {new Date(data.snapshot.ts).toLocaleString()}
                   </span>
 
-                  <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-xs text-slate-300">
+                  <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] text-slate-300">
                     Confidence: {confidenceLabel(data.snapshot.confidence)}
                   </span>
                 </div>
 
                 <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
                     Current signal
                   </div>
-                  <p className="mt-2 text-xl font-semibold text-white">
+                  <p className="mt-2 text-[18px] font-semibold text-white">
                     {summarizeMove(data.snapshot)}
                   </p>
-                  <p className="mt-3 text-sm leading-7 text-slate-300">
+                  <p className="mt-2.5 text-sm leading-7 text-slate-300">
                     {buildMeaning(data.snapshot)}
                   </p>
                 </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-3">
+                <div className="mt-3 grid grid-cols-2 gap-2.5">
                   <SignalBox
                     label="Bias"
                     value={labelRegime(data.snapshot.regime)}
@@ -391,8 +436,8 @@ export default function RiskSentiment() {
                       data.snapshot.regime.includes("risk_on")
                         ? "positive"
                         : data.snapshot.regime.includes("risk_off")
-                        ? "negative"
-                        : "neutral"
+                          ? "negative"
+                          : "neutral"
                     }
                   />
                   <SignalBox
@@ -420,8 +465,8 @@ export default function RiskSentiment() {
                   />
                 </div>
 
-                <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
                     Trade take
                   </div>
                   <p className="mt-2 text-sm leading-7 text-slate-200">
@@ -429,53 +474,46 @@ export default function RiskSentiment() {
                   </p>
                 </div>
 
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  <SummaryList
-                    title="Supporting"
-                    tone="positive"
-                    items={topSupportive}
-                  />
-                  <SummaryList
-                    title="Pushing back"
-                    tone="negative"
-                    items={topDefensive}
-                  />
+                <div className="mt-3 grid gap-2.5 md:grid-cols-2">
+                  <SummaryList title="Supporting" tone="positive" items={topSupportive} />
+                  <SummaryList title="Pushing back" tone="negative" items={topDefensive} />
                 </div>
               </div>
             </div>
 
-            <div className="rounded-[22px] border border-white/10 bg-white/[0.03] p-4">
-              <div className="mb-4 flex items-center justify-between">
+            <div className="rounded-[20px] border border-white/10 bg-white/[0.03] p-4">
+              <div className="mb-3 flex items-center justify-between">
                 <div>
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
                     Risk ladder
                   </div>
                   <div className="mt-1 text-sm text-slate-300">
                     Defensive on the left, pro-risk on the right
                   </div>
                 </div>
-                <div className="text-right text-xs text-slate-400">
+                <div className="text-right text-[11px] text-slate-400">
                   {ladderRows.length} assets
                 </div>
               </div>
 
-              <div className="overflow-hidden rounded-[20px] border border-white/10 bg-black/20">
-                <div className="grid grid-cols-[220px_minmax(0,1fr)] border-b border-white/10 bg-white/[0.03]">
-                  <div className="px-4 py-3 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+              <div className="overflow-hidden rounded-[18px] border border-white/10 bg-black/20">
+                <div className="grid grid-cols-[160px_minmax(0,1fr)] border-b border-white/10 bg-white/[0.03]">
+                  <div className="px-4 py-2 text-[10px] uppercase tracking-[0.18em] text-slate-500">
                     Asset
                   </div>
-                  <div className="px-4 py-3">
-                    <div className="relative h-6">
-                      <div className="absolute inset-y-1 left-0 w-[35%] rounded-full bg-rose-500/15" />
-                      <div className="absolute inset-y-1 left-[35%] w-[30%] rounded-full bg-slate-500/10" />
-                      <div className="absolute inset-y-1 right-0 w-[35%] rounded-full bg-emerald-500/15" />
-                      <div className="absolute left-0 top-0 text-[10px] uppercase tracking-[0.14em] text-rose-300">
+                  <div className="px-4 py-2">
+                    <div className="relative h-5">
+                      <div className="absolute inset-y-0 left-0 w-[34%] rounded-full bg-rose-500/15" />
+                      <div className="absolute inset-y-0 left-[34%] w-[32%] rounded-full bg-slate-500/10" />
+                      <div className="absolute inset-y-0 right-0 w-[34%] rounded-full bg-emerald-500/15" />
+
+                      <div className="absolute left-0 -top-[1px] text-[9px] uppercase tracking-[0.16em] text-rose-300">
                         Defensive
                       </div>
-                      <div className="absolute left-1/2 top-0 -translate-x-1/2 text-[10px] uppercase tracking-[0.14em] text-slate-400">
+                      <div className="absolute left-1/2 -top-[1px] -translate-x-1/2 text-[9px] uppercase tracking-[0.16em] text-slate-400">
                         Neutral
                       </div>
-                      <div className="absolute right-0 top-0 text-[10px] uppercase tracking-[0.14em] text-emerald-300">
+                      <div className="absolute right-0 -top-[1px] text-[9px] uppercase tracking-[0.16em] text-emerald-300">
                         Pro Risk
                       </div>
                     </div>
@@ -486,35 +524,37 @@ export default function RiskSentiment() {
                   {ladderRows.map((row) => (
                     <div
                       key={row.code}
-                      className="grid grid-cols-[220px_minmax(0,1fr)] items-center"
+                      className="grid grid-cols-[160px_minmax(0,1fr)] items-center"
                     >
-                      <div className="px-4 py-3">
-                        <div className="text-sm font-semibold text-white">{row.name}</div>
-                        <div className="mt-1 text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                      <div className="px-4 py-2">
+                        <div className="truncate text-[13px] font-semibold leading-5 text-white">
+                          {row.name}
+                        </div>
+                        <div className="truncate text-[10px] uppercase tracking-[0.16em] text-slate-500">
                           {row.code} · {row.shortClass}
                         </div>
                       </div>
 
-                      <div className="px-4 py-3">
-                        <div className="grid items-center gap-3 lg:grid-cols-[minmax(0,1fr)_260px]">
-                          <div className="relative h-10 rounded-full border border-white/10 bg-[linear-gradient(90deg,rgba(244,63,94,0.13)_0%,rgba(100,116,139,0.08)_50%,rgba(16,185,129,0.13)_100%)]">
+                      <div className="min-w-0 px-4 py-1.5">
+                        <div className="grid min-w-0 items-center gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(248px,280px)]">
+                          <div className="relative h-9 rounded-full border border-white/10 bg-[linear-gradient(90deg,rgba(244,63,94,0.13)_0%,rgba(100,116,139,0.08)_50%,rgba(16,185,129,0.13)_100%)]">
                             <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/10" />
 
                             <div
-                              className={`absolute top-1/2 h-5 w-5 -translate-y-1/2 rounded-full border-2 shadow-[0_0_18px_rgba(255,255,255,0.15)] ${dotTone(
+                              className={`absolute top-1/2 h-[16px] w-[16px] -translate-y-1/2 rounded-full border shadow-[0_0_18px_rgba(255,255,255,0.14)] ${dotTone(
                                 row.direction
                               )}`}
                               style={{
-                                left: `calc(${row.normalized}% - 10px)`,
+                                left: `calc(${row.normalized}% - 8px)`,
                               }}
                             />
                           </div>
 
-                          <div className="grid grid-cols-4 gap-2">
+                          <div className="grid min-w-0 grid-cols-4 gap-1.5">
                             <MiniValue label="15m" value={fmtPct(row.latest)} />
                             <MiniValue label="1h" value={fmtPct(row.hour)} />
-                            <MiniValue label="London" value={fmtPct(row.london)} />
-                            <MiniValue label="Session" value={fmtPct(row.session)} />
+                            <MiniValue label="Ldn" value={fmtPct(row.london)} />
+                            <MiniValue label="Sess" value={fmtPct(row.session)} />
                           </div>
                         </div>
                       </div>
@@ -523,15 +563,15 @@ export default function RiskSentiment() {
                 </div>
               </div>
 
-              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
                 <LegendPill
                   title="Defensive"
-                  description="Assets leaning against risk appetite"
+                  description="Assets leaning against appetite"
                   tone="negative"
                 />
                 <LegendPill
                   title="Neutral"
-                  description="Little directional influence right now"
+                  description="Little influence right now"
                   tone="neutral"
                 />
                 <LegendPill
@@ -561,15 +601,15 @@ function SignalBox({
     tone === "positive"
       ? "text-emerald-300"
       : tone === "negative"
-      ? "text-rose-300"
-      : "text-white";
+        ? "text-rose-300"
+        : "text-white";
 
   return (
     <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+      <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
         {label}
       </div>
-      <div className={`mt-2 text-xl font-semibold ${valueClass}`}>{value}</div>
+      <div className={`mt-1.5 text-[15px] font-semibold ${valueClass}`}>{value}</div>
     </div>
   );
 }
@@ -588,22 +628,21 @@ function SummaryList({
       ? "border-emerald-500/20 bg-emerald-500/8"
       : "border-rose-500/20 bg-rose-500/8";
 
-  const titleClass =
-    tone === "positive" ? "text-emerald-300" : "text-rose-300";
+  const titleClass = tone === "positive" ? "text-emerald-300" : "text-rose-300";
 
   return (
     <div className={`rounded-2xl border p-3 ${wrapperClass}`}>
-      <div className={`text-[11px] uppercase tracking-[0.16em] ${titleClass}`}>
+      <div className={`text-[10px] uppercase tracking-[0.16em] ${titleClass}`}>
         {title}
       </div>
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-2.5 flex flex-wrap gap-1.5">
         {items.length === 0 ? (
           <span className="text-sm text-slate-400">None notable</span>
         ) : (
           items.map((item) => (
             <span
               key={item}
-              className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-sm text-white"
+              className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[13px] text-white"
             >
               {item}
             </span>
@@ -622,11 +661,13 @@ function MiniValue({
   value: string;
 }) {
   return (
-    <div className="rounded-xl bg-black/20 px-2 py-2">
-      <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+    <div className="min-w-0 rounded-xl border border-white/5 bg-black/25 px-2 py-1.5">
+      <div className="truncate text-[8px] uppercase tracking-[0.14em] text-slate-500">
         {label}
       </div>
-      <div className={`mt-1 text-sm font-medium ${boxTone(value)}`}>{value}</div>
+      <div className={`mt-0.5 truncate text-[12px] font-medium ${boxTone(value)}`}>
+        {value}
+      </div>
     </div>
   );
 }
@@ -644,8 +685,8 @@ function LegendPill({
     tone === "positive"
       ? "border-emerald-500/20 bg-emerald-500/8 text-emerald-200"
       : tone === "negative"
-      ? "border-rose-500/20 bg-rose-500/8 text-rose-200"
-      : "border-white/10 bg-white/[0.03] text-slate-200";
+        ? "border-rose-500/20 bg-rose-500/8 text-rose-200"
+        : "border-white/10 bg-white/[0.03] text-slate-200";
 
   return (
     <div className={`rounded-2xl border p-3 ${toneClass}`}>

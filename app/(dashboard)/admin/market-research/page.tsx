@@ -741,147 +741,147 @@ export default function AdminMarketResearchPage() {
       </section>
 
       <div className="grid items-start gap-6 xl:grid-cols-[300px,minmax(0,1fr)]">
-  <aside className="xl:self-start">
-    <SectionShell
-      title="Research Controls"
-      subtitle="Filters, dates, and reload actions."
-      right={<Filter size={16} className="text-neutral-400" />}
-    >
-      <div className="space-y-5">
-        <div>
-          <label className="mb-2 block text-[11px] uppercase tracking-[0.16em] text-neutral-500">
-            Analysis date
-          </label>
-          <input
-            type="date"
-            value={cotAnalysisDate}
-            onChange={(e) => setCotAnalysisDate(e.target.value)}
-            className="w-full rounded-2xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-white outline-none"
-          />
-          <p className="mt-2 text-xs text-neutral-500">
-            Leave blank to use the latest completed digest date.
-          </p>
-        </div>
+        <aside className="xl:self-start">
+          <SectionShell
+            title="Research Controls"
+            subtitle="Filters, dates, and reload actions."
+            right={<Filter size={16} className="text-neutral-400" />}
+          >
+            <div className="space-y-5">
+              <div>
+                <label className="mb-2 block text-[11px] uppercase tracking-[0.16em] text-neutral-500">
+                  Analysis date
+                </label>
+                <input
+                  type="date"
+                  value={cotAnalysisDate}
+                  onChange={(e) => setCotAnalysisDate(e.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-white outline-none"
+                />
+                <p className="mt-2 text-xs text-neutral-500">
+                  Leave blank to use the latest completed digest date.
+                </p>
+              </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="mb-2 block text-[11px] uppercase tracking-[0.16em] text-neutral-500">
-              Date from
-            </label>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="w-full rounded-2xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-white outline-none"
-            />
-          </div>
-          <div>
-            <label className="mb-2 block text-[11px] uppercase tracking-[0.16em] text-neutral-500">
-              Date to
-            </label>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="w-full rounded-2xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-white outline-none"
-            />
-          </div>
-        </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-2 block text-[11px] uppercase tracking-[0.16em] text-neutral-500">
+                    Date from
+                  </label>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-white outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-[11px] uppercase tracking-[0.16em] text-neutral-500">
+                    Date to
+                  </label>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-white outline-none"
+                  />
+                </div>
+              </div>
 
-        <div>
-          <label className="mb-2 block text-[11px] uppercase tracking-[0.16em] text-neutral-500">
-            Asset classes
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {["yield", "vol", "index", "commodity"].map((assetClass) => {
-              const active = assetClasses.includes(assetClass);
+              <div>
+                <label className="mb-2 block text-[11px] uppercase tracking-[0.16em] text-neutral-500">
+                  Asset classes
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {["yield", "vol", "index", "commodity"].map((assetClass) => {
+                    const active = assetClasses.includes(assetClass);
 
-              return (
+                    return (
+                      <button
+                        key={assetClass}
+                        type="button"
+                        onClick={() => toggleAssetClass(assetClass)}
+                        className={[
+                          "rounded-full border px-3 py-1.5 text-xs transition",
+                          active
+                            ? "border-white/20 bg-white/10 text-white"
+                            : "border-white/10 bg-white/[0.03] text-neutral-400 hover:text-white",
+                        ].join(" ")}
+                      >
+                        {assetClass}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-[11px] uppercase tracking-[0.16em] text-neutral-500">
+                  Asset codes
+                </label>
+                <input
+                  type="text"
+                  value={assetCodesInput}
+                  onChange={(e) => setAssetCodesInput(e.target.value)}
+                  placeholder="US10Y,VIX,SPX"
+                  className="w-full rounded-2xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-white outline-none"
+                />
+              </div>
+
+              <div className="grid gap-2">
                 <button
-                  key={assetClass}
                   type="button"
-                  onClick={() => toggleAssetClass(assetClass)}
-                  className={[
-                    "rounded-full border px-3 py-1.5 text-xs transition",
-                    active
-                      ? "border-white/20 bg-white/10 text-white"
-                      : "border-white/10 bg-white/[0.03] text-neutral-400 hover:text-white",
-                  ].join(" ")}
+                  onClick={() => void loadCotResearch()}
+                  disabled={busyCot}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/[0.09] disabled:opacity-50"
                 >
-                  {assetClass}
+                  <RefreshCw size={14} className={busyCot ? "animate-spin" : ""} />
+                  {busyCot ? "Loading inherited bias..." : "Load inherited bias"}
                 </button>
-              );
-            })}
-          </div>
-        </div>
 
-        <div>
-          <label className="mb-2 block text-[11px] uppercase tracking-[0.16em] text-neutral-500">
-            Asset codes
-          </label>
-          <input
-            type="text"
-            value={assetCodesInput}
-            onChange={(e) => setAssetCodesInput(e.target.value)}
-            placeholder="US10Y,VIX,SPX"
-            className="w-full rounded-2xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-white outline-none"
-          />
-        </div>
+                <button
+                  type="button"
+                  onClick={() => void loadContext()}
+                  disabled={busyContext}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm font-medium text-neutral-200 transition hover:bg-white/[0.06] disabled:opacity-50"
+                >
+                  <RefreshCw size={14} className={busyContext ? "animate-spin" : ""} />
+                  {busyContext ? "Loading context..." : "Load market context"}
+                </button>
+              </div>
 
-        <div className="grid gap-2">
-          <button
-            type="button"
-            onClick={() => void loadCotResearch()}
-            disabled={busyCot}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/[0.09] disabled:opacity-50"
-          >
-            <RefreshCw size={14} className={busyCot ? "animate-spin" : ""} />
-            {busyCot ? "Loading inherited bias..." : "Load inherited bias"}
-          </button>
+              {resolvedCotDate ? (
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-neutral-300">
+                  Using inherited date:{" "}
+                  <span className="font-medium text-white">{resolvedCotDate}</span>
+                </div>
+              ) : null}
 
-          <button
-            type="button"
-            onClick={() => void loadContext()}
-            disabled={busyContext}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm font-medium text-neutral-200 transition hover:bg-white/[0.06] disabled:opacity-50"
-          >
-            <RefreshCw size={14} className={busyContext ? "animate-spin" : ""} />
-            {busyContext ? "Loading context..." : "Load market context"}
-          </button>
-        </div>
+              {digest ? (
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-xs text-neutral-400">
+                  <div>Model: {digest.model}</div>
+                  <div>Rows used: {digest.source_row_count}</div>
+                  <div>Status: {digest.status}</div>
+                  <div>Updated: {new Date(digest.updated_at).toLocaleString()}</div>
+                </div>
+              ) : null}
 
-        {resolvedCotDate ? (
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-neutral-300">
-            Using inherited date:{" "}
-            <span className="font-medium text-white">{resolvedCotDate}</span>
-          </div>
-        ) : null}
+              {cotError ? (
+                <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-3 text-sm text-rose-200">
+                  {cotError}
+                </div>
+              ) : null}
 
-        {digest ? (
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-xs text-neutral-400">
-            <div>Model: {digest.model}</div>
-            <div>Rows used: {digest.source_row_count}</div>
-            <div>Status: {digest.status}</div>
-            <div>Updated: {new Date(digest.updated_at).toLocaleString()}</div>
-          </div>
-        ) : null}
+              {contextError ? (
+                <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-3 text-sm text-rose-200">
+                  {contextError}
+                </div>
+              ) : null}
+            </div>
+          </SectionShell>
+        </aside>
 
-        {cotError ? (
-          <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-3 text-sm text-rose-200">
-            {cotError}
-          </div>
-        ) : null}
-
-        {contextError ? (
-          <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-3 text-sm text-rose-200">
-            {contextError}
-          </div>
-        ) : null}
-      </div>
-    </SectionShell>
-  </aside>
-
-  <div className="min-w-0 space-y-6">
+        <div className="min-w-0 space-y-6">
           <div className="grid gap-6 2xl:grid-cols-[minmax(0,1fr),340px]">
             <SectionShell
               title="Inherited Bias"

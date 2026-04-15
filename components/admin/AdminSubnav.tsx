@@ -2,29 +2,40 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, CreditCard, Home } from "lucide-react";
+import {
+  BarChart3,
+  ClipboardList,
+  CreditCard,
+  Home,
+  Waves,
+} from "lucide-react";
+import clsx from "clsx";
 
-const ITEMS = [
+const items = [
   {
     href: "/admin",
     label: "Overview",
     icon: Home,
-    match: (pathname: string) => pathname === "/admin",
   },
   {
     href: "/admin/market-research",
     label: "Market Research",
     icon: BarChart3,
-    match: (pathname: string) =>
-      pathname === "/admin/market-research" ||
-      pathname.startsWith("/admin/market-research/"),
+  },
+  {
+    href: "/admin/sentiment-lab",
+    label: "Sentiment Lab",
+    icon: Waves,
+  },
+  {
+    href: "/admin/cot-digest",
+    label: "COT Digest",
+    icon: ClipboardList,
   },
   {
     href: "/admin/billing",
     label: "Billing",
     icon: CreditCard,
-    match: (pathname: string) =>
-      pathname === "/admin/billing" || pathname.startsWith("/admin/billing/"),
   },
 ];
 
@@ -32,28 +43,31 @@ export default function AdminSubnav() {
   const pathname = usePathname();
 
   return (
-    <div className="mb-6 overflow-x-auto">
-      <div className="inline-flex min-w-full gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2">
-        {ITEMS.map(({ href, label, icon: Icon, match }) => {
-          const active = match(pathname);
+    <nav className="overflow-x-auto">
+      <div className="inline-flex min-w-full gap-2 rounded-2xl border border-white/10 bg-black/30 p-2">
+        {items.map((item) => {
+          const Icon = item.icon;
+          const active =
+            pathname === item.href ||
+            (item.href !== "/admin" && pathname.startsWith(item.href));
 
           return (
             <Link
-              key={href}
-              href={href}
-              className={[
-                "inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm transition-colors whitespace-nowrap",
+              key={item.href}
+              href={item.href}
+              className={clsx(
+                "inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm transition",
                 active
                   ? "bg-white/10 text-white"
-                  : "text-neutral-400 hover:bg-white/[0.04] hover:text-white",
-              ].join(" ")}
+                  : "text-neutral-400 hover:bg-white/[0.05] hover:text-white"
+              )}
             >
               <Icon size={15} />
-              <span>{label}</span>
+              <span>{item.label}</span>
             </Link>
           );
         })}
       </div>
-    </div>
+    </nav>
   );
 }
