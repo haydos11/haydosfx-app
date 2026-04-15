@@ -1,3 +1,4 @@
+import BillingSyncButton from "@/components/admin/BillingSyncButton";
 import { getAppSupabaseAdmin } from "@/lib/supabase/appAdmin";
 
 type BillingRow = {
@@ -69,11 +70,20 @@ export default async function AdminBillingPage() {
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-        <h1 className="text-xl font-semibold text-white">Billing</h1>
-        <p className="mt-2 max-w-3xl text-sm text-neutral-400">
-          Stripe-synced premium access records. This is the first layer that will
-          later drive Discord access, TradingView provisioning, and EMABot licences.
-        </p>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h1 className="text-xl font-semibold text-white">Billing</h1>
+            <p className="mt-2 max-w-3xl text-sm text-neutral-400">
+              Stripe-synced premium access records. This is the first layer that
+              will later drive Discord access, TradingView provisioning, and
+              EMABot licences.
+            </p>
+          </div>
+
+          <div className="min-w-[280px]">
+            <BillingSyncButton />
+          </div>
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
