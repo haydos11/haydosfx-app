@@ -43,6 +43,29 @@ type AnalyzeResponse = {
   error?: string;
 };
 
+type SleeveKey =
+  | "equities"
+  | "fxCarry"
+  | "vol"
+  | "rates"
+  | "commodities";
+
+type SleeveInput = {
+  key: SleeveKey;
+  label: string;
+  score: number;
+  normalized: number;
+  state:
+    | "supportive"
+    | "mild_supportive"
+    | "mixed"
+    | "mild_defensive"
+    | "defensive";
+  agreement: number;
+  leaders: string[];
+  laggards: string[];
+};
+
 export type RiskSentimentAnalysisInput = {
   regime: string;
   score: number | null;
@@ -60,6 +83,17 @@ export type RiskSentimentAnalysisInput = {
   summaryText: string | null;
   topSupportive: string[];
   topDefensive: string[];
+  sleeves?: Record<SleeveKey, SleeveInput> | null;
+  tapeQuality?:
+    | "broad_supportive"
+    | "narrow_supportive"
+    | "mixed"
+    | "defensive_divergence"
+    | "broad_defensive"
+    | null;
+  tradeTranslation?: string | null;
+  bestExpressions?: string[];
+  warningFlags?: string[];
   ladderRows: Array<{
     code: string;
     name: string;
@@ -67,8 +101,10 @@ export type RiskSentimentAnalysisInput = {
     direction: "risk_on" | "risk_off" | "neutral";
     score: number | null;
     normalized: number | null;
+    lastPrice?: number | null;
     latest: number | null;
     hour: number | null;
+    daily?: number | null;
     london: number | null;
     session: number | null;
   }>;
@@ -106,6 +142,21 @@ function confidenceLabel(confidence: number | null) {
   return "Low";
 }
 
+function labelTapeQuality(value: RiskSentimentAnalysisInput["tapeQuality"]) {
+  switch (value) {
+    case "broad_supportive":
+      return "Broad Supportive";
+    case "narrow_supportive":
+      return "Narrow Supportive";
+    case "defensive_divergence":
+      return "Defensive Divergence";
+    case "broad_defensive":
+      return "Broad Defensive";
+    default:
+      return "Mixed";
+  }
+}
+
 function buildRiskSentimentPrompt(input: RiskSentimentAnalysisInput) {
   const compact = {
     regime: input.regime,
@@ -122,6 +173,11 @@ function buildRiskSentimentPrompt(input: RiskSentimentAnalysisInput) {
     rolling4hScoreChange: input.rolling4hScoreChange,
     updatedAt: input.updatedAt,
     summaryText: input.summaryText,
+    tapeQuality: input.tapeQuality,
+    tradeTranslation: input.tradeTranslation,
+    bestExpressions: input.bestExpressions,
+    warningFlags: input.warningFlags,
+    sleeves: input.sleeves,
     topSupportive: input.topSupportive,
     topDefensive: input.topDefensive,
     ladderRows: input.ladderRows,
@@ -136,12 +192,11 @@ function buildRiskSentimentPrompt(input: RiskSentimentAnalysisInput) {
     "You may infer broad implications from the direction of the assets shown.",
     "",
     "Important interpretation rules:",
-    "1. Treat assets tagged risk_on as supporting pro-risk tone and assets tagged risk_off as defensive or conflicting tone.",
-    "2. VIX falling can support risk-on. Bonds rising can be defensive. FX beta pairs like AUDJPY matter for appetite.",
-    "3. Use breadth and confidence to judge how clean the signal is.",
-    "4. Use London, session, and short-term changes to assess whether the tone is accelerating, fading, or mixed.",
+    "1. Prioritise the sleeve summaries first: equities, FX carry, vol, rates, commodities.",
+    "2. Tape quality matters more than isolated asset moves.",
+    "3. Use best expressions and warning flags when translating to trade ideas.",
+    "4. If confirmation is incomplete, say so clearly and reduce aggressiveness.",
     "5. Focus on practical trade construction, especially FX and indices where appropriate.",
-    "6. Be selective. If the signal is mixed, say so clearly.",
     "",
     "JSON INPUT:",
     "```json",
@@ -376,12 +431,12 @@ export default function AnalyzeRiskSentimentButton({
       </DialogTrigger>
 
       <DialogContent
-  className={clsx(
-    "fixed right-0 top-0 h-screen w-full max-w-[980px] translate-x-0 rounded-none border-l border-neutral-800 border-t-0 border-r-0 border-b-0",
-    "bg-neutral-950/96 p-0 text-neutral-100 shadow-2xl backdrop-blur",
-    "flex flex-col overflow-hidden"
-  )}
->
+        className={clsx(
+          "fixed right-0 top-0 h-screen w-full max-w-[980px] translate-x-0 rounded-none border-l border-neutral-800 border-t-0 border-r-0 border-b-0",
+          "bg-neutral-950/96 p-0 text-neutral-100 shadow-2xl backdrop-blur",
+          "flex flex-col overflow-hidden"
+        )}
+      >
         <DialogHeader className="shrink-0 border-b border-neutral-800/70 bg-[linear-gradient(180deg,rgba(18,18,22,0.96),rgba(12,12,16,0.96))] px-5 py-4">
           <div className="flex items-start justify-between gap-4">
             <DialogTitle className="min-w-0 flex-1">
@@ -411,7 +466,7 @@ export default function AnalyzeRiskSentimentButton({
                   </div>
 
                   <p className="mt-1 text-sm text-neutral-400">
-                    Intraday regime, drivers, trade ideas, and invalidation points
+                    Intraday regime, sleeves, trade ideas, and invalidation points
                   </p>
                 </div>
               </div>
@@ -442,16 +497,16 @@ export default function AnalyzeRiskSentimentButton({
                   Confidence {confidenceLabel(input.confidence)}
                 </span>
                 <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-neutral-300">
-                  Breadth {fmtPct((input.breadth ?? null) != null ? (input.breadth ?? 0) * 100 : null)}
+                  Tape {labelTapeQuality(input.tapeQuality)}
                 </span>
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-3">
                 <MetricCard label="Score" value={fmtNum(input.score)} />
+                <MetricCard label="Breadth" value={fmtPct(input.breadth != null ? input.breadth * 100 : null)} />
                 <MetricCard label="Since London" value={fmtNum(input.londonChangeScore)} />
                 <MetricCard label="Last Update" value={fmtNum(input.previousScoreChange)} />
                 <MetricCard label="2h Drift" value={fmtNum(input.rolling2hScoreChange)} />
-                <MetricCard label="4h Drift" value={fmtNum(input.rolling4hScoreChange)} />
                 <MetricCard
                   label="Updated"
                   value={
@@ -469,25 +524,37 @@ export default function AnalyzeRiskSentimentButton({
             <div className="rounded-2xl border border-neutral-800/80 bg-neutral-900/45 p-4">
               <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-neutral-500">
                 <Activity className="h-3.5 w-3.5" />
-                Board highlights
+                Translation
               </div>
 
               <div className="space-y-3">
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm leading-6 text-neutral-200">
+                  {input.tradeTranslation ?? "No translation yet."}
+                </div>
+
                 <HighlightGroup
                   icon={<TrendingUp className="h-3.5 w-3.5" />}
-                  title="Supporting"
-                  items={input.topSupportive}
+                  title="Best expressions"
+                  items={input.bestExpressions ?? []}
                   tone="positive"
                 />
                 <HighlightGroup
                   icon={<ShieldAlert className="h-3.5 w-3.5" />}
-                  title="Defensive"
-                  items={input.topDefensive}
+                  title="Warning flags"
+                  items={input.warningFlags ?? []}
                   tone="negative"
                 />
               </div>
             </div>
           </div>
+
+          {!!input.sleeves && (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+              {Object.values(input.sleeves).map((sleeve) => (
+                <SleeveCard key={sleeve.key} sleeve={sleeve} />
+              ))}
+            </div>
+          )}
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
@@ -532,7 +599,7 @@ export default function AnalyzeRiskSentimentButton({
           <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2 text-[11px] text-neutral-500">
               <BarChart3 className="h-3.5 w-3.5" />
-              Built from regime, breadth, confidence, ladder positioning, and top supporting / defensive assets.
+              Built from regime, sleeves, tape quality, ladder positioning, and cross-asset confirmation.
             </div>
 
             <div className="flex items-center gap-2">
@@ -605,6 +672,33 @@ function HighlightGroup({
         ) : (
           <span className="text-xs text-neutral-400">None notable</span>
         )}
+      </div>
+    </div>
+  );
+}
+
+function SleeveCard({
+  sleeve,
+}: {
+  sleeve: SleeveInput;
+}) {
+  const toneClass =
+    sleeve.state === "supportive" || sleeve.state === "mild_supportive"
+      ? "border-emerald-500/20 bg-emerald-500/8"
+      : sleeve.state === "defensive" || sleeve.state === "mild_defensive"
+        ? "border-rose-500/20 bg-rose-500/8"
+        : "border-white/10 bg-white/[0.03]";
+
+  return (
+    <div className={`rounded-2xl border p-3 ${toneClass}`}>
+      <div className="text-[10px] uppercase tracking-[0.16em] text-neutral-500">
+        {sleeve.label}
+      </div>
+      <div className="mt-1 text-sm font-semibold text-white">
+        {sleeve.state.replaceAll("_", " ")}
+      </div>
+      <div className="mt-2 text-xs text-neutral-400">
+        Leaders: {sleeve.leaders.join(", ") || "—"}
       </div>
     </div>
   );
