@@ -39,13 +39,17 @@ function getPlanKeyFromPriceId(priceId: string | null) {
   return null;
 }
 
-function getCustomerEmail(customer: Stripe.Customer | Stripe.DeletedCustomer | string) {
+function getCustomerEmail(
+  customer: Stripe.Customer | Stripe.DeletedCustomer | string
+) {
   if (typeof customer === "string") return null;
   if ("deleted" in customer && customer.deleted) return null;
   return customer.email ?? null;
 }
 
-function getCustomerId(customer: Stripe.Customer | Stripe.DeletedCustomer | string) {
+function getCustomerId(
+  customer: Stripe.Customer | Stripe.DeletedCustomer | string
+) {
   return typeof customer === "string" ? customer : customer.id;
 }
 
@@ -73,7 +77,7 @@ async function syncAllSubscriptionsFromStripe() {
       status: "all",
       limit: 100,
       starting_after: startingAfter,
-      expand: ["data.customer", "data.items.data.price.product"],
+      expand: ["data.customer"],
     });
 
     for (const subscription of page.data) {
