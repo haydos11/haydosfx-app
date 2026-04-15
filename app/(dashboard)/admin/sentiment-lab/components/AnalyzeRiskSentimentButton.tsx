@@ -335,7 +335,7 @@ function SkeletonLine({ short }: { short?: boolean }) {
   return (
     <div
       className={clsx(
-        "h-3 rounded-full bg-neutral-800/70 animate-pulse",
+        "h-3 animate-pulse rounded-full bg-neutral-800/70",
         short ? "w-2/3" : "w-full"
       )}
     />
@@ -345,9 +345,9 @@ function SkeletonLine({ short }: { short?: boolean }) {
 function ThinkingDots() {
   return (
     <span className="inline-flex items-center gap-1">
-      <span className="h-1.5 w-1.5 rounded-full bg-neutral-500 animate-bounce [animation-delay:-200ms]" />
-      <span className="h-1.5 w-1.5 rounded-full bg-neutral-500 animate-bounce [animation-delay:-100ms]" />
-      <span className="h-1.5 w-1.5 rounded-full bg-neutral-500 animate-bounce" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-neutral-500 [animation-delay:-200ms]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-neutral-500 [animation-delay:-100ms]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-neutral-500" />
     </span>
   );
 }
@@ -432,22 +432,23 @@ export default function AnalyzeRiskSentimentButton({
 
       <DialogContent
         className={clsx(
-          "fixed right-0 top-0 h-screen w-full max-w-[980px] translate-x-0 rounded-none border-l border-neutral-800 border-t-0 border-r-0 border-b-0",
-          "bg-neutral-950/96 p-0 text-neutral-100 shadow-2xl backdrop-blur",
-          "flex flex-col overflow-hidden"
+          "!left-auto !right-0 !top-0 !translate-x-0 !translate-y-0",
+          "!h-screen !max-h-screen !w-[820px] max-md:!w-[100vw] !max-w-[820px] max-md:!max-w-[100vw]",
+          "flex flex-col overflow-hidden rounded-none border-y-0 border-r-0 border-l border-neutral-800",
+          "bg-neutral-950/96 p-0 text-neutral-100 shadow-2xl backdrop-blur-xl"
         )}
       >
-        <DialogHeader className="shrink-0 border-b border-neutral-800/70 bg-[linear-gradient(180deg,rgba(18,18,22,0.96),rgba(12,12,16,0.96))] px-5 py-4">
+        <DialogHeader className="shrink-0 border-b border-neutral-800/70 bg-[linear-gradient(180deg,rgba(18,18,22,0.96),rgba(12,12,16,0.96))] px-4 py-4 sm:px-5">
           <div className="flex items-start justify-between gap-4">
             <DialogTitle className="min-w-0 flex-1">
               <div className="flex items-start gap-3">
-                <span className="mt-0.5 inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20">
+                <span className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20">
                   <Sparkles className="h-4 w-4 text-fuchsia-300" />
                 </span>
 
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate text-[20px] font-semibold text-white">
+                    <span className="truncate text-[18px] font-semibold text-white sm:text-[20px]">
                       Risk Sentiment AI Brief
                     </span>
                     {cached !== null && (
@@ -484,11 +485,12 @@ export default function AnalyzeRiskSentimentButton({
             </DialogClose>
           </div>
 
-          <div className="mt-4 grid gap-3 lg:grid-cols-[1.15fr_0.85fr]">
+          <div className="mt-4 grid gap-3 xl:grid-cols-[1.08fr_0.92fr]">
             <div className="rounded-2xl border border-neutral-800/80 bg-neutral-900/45 p-4">
               <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500">
                 Current read
               </div>
+
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-white">
                   {labelRegime(input.regime)}
@@ -501,9 +503,12 @@ export default function AnalyzeRiskSentimentButton({
                 </span>
               </div>
 
-              <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-3">
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
                 <MetricCard label="Score" value={fmtNum(input.score)} />
-                <MetricCard label="Breadth" value={fmtPct(input.breadth != null ? input.breadth * 100 : null)} />
+                <MetricCard
+                  label="Breadth"
+                  value={fmtPct(input.breadth != null ? input.breadth * 100 : null)}
+                />
                 <MetricCard label="Since London" value={fmtNum(input.londonChangeScore)} />
                 <MetricCard label="Last Update" value={fmtNum(input.previousScoreChange)} />
                 <MetricCard label="2h Drift" value={fmtNum(input.rolling2hScoreChange)} />
@@ -549,16 +554,20 @@ export default function AnalyzeRiskSentimentButton({
           </div>
 
           {!!input.sleeves && (
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-              {Object.values(input.sleeves).map((sleeve) => (
-                <SleeveCard key={sleeve.key} sleeve={sleeve} />
-              ))}
+            <div className="mt-3 overflow-x-auto pb-1">
+              <div className="flex min-w-[760px] gap-2">
+                {Object.values(input.sleeves).map((sleeve) => (
+                  <div key={sleeve.key} className="min-w-[148px] flex-1">
+                    <SleeveCard sleeve={sleeve} />
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-          <div className="mx-auto w-full max-w-[980px] space-y-4">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5 sm:py-5">
+          <div className="mx-auto w-full max-w-[680px] space-y-4">
             {busy && (
               <div className="rounded-3xl border border-neutral-800/80 bg-neutral-900/40 p-5">
                 <div className="flex items-center gap-2 text-sm text-neutral-300">
@@ -582,7 +591,7 @@ export default function AnalyzeRiskSentimentButton({
             )}
 
             {!busy && !error && text && (
-              <div className="rounded-3xl border border-neutral-800/80 bg-neutral-900/40 p-6">
+              <div className="rounded-3xl border border-neutral-800/80 bg-neutral-900/40 p-5 sm:p-6">
                 <RenderBrief text={text} />
               </div>
             )}
@@ -595,7 +604,7 @@ export default function AnalyzeRiskSentimentButton({
           </div>
         </div>
 
-        <DialogFooter className="shrink-0 border-t border-neutral-800/70 bg-neutral-950/85 px-5 py-3">
+        <DialogFooter className="shrink-0 border-t border-neutral-800/70 bg-neutral-950/90 px-4 py-3 sm:px-5">
           <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2 text-[11px] text-neutral-500">
               <BarChart3 className="h-3.5 w-3.5" />
@@ -694,10 +703,13 @@ function SleeveCard({
       <div className="text-[10px] uppercase tracking-[0.16em] text-neutral-500">
         {sleeve.label}
       </div>
-      <div className="mt-1 text-sm font-semibold text-white">
+      <div className="mt-1 text-sm font-semibold capitalize text-white">
         {sleeve.state.replaceAll("_", " ")}
       </div>
-      <div className="mt-2 text-xs text-neutral-400">
+      <div className="mt-1 text-xs text-neutral-400">
+        Agreement {Math.round(sleeve.agreement * 100)}%
+      </div>
+      <div className="mt-2 text-xs text-neutral-300">
         Leaders: {sleeve.leaders.join(", ") || "—"}
       </div>
     </div>

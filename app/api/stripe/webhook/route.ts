@@ -1,6 +1,6 @@
 import Stripe from "stripe";
 import { getStripeServer, getPremiumPriceIdSet } from "@/lib/stripe/server";
-import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { getAppSupabaseAdmin } from "@/lib/supabase/appAdmin";
 
 export const runtime = "nodejs";
 
@@ -40,7 +40,7 @@ function getPlanKeyFromPriceId(priceId: string | null) {
 }
 
 async function hasProcessedEvent(stripeEventId: string) {
-  const supabase = getSupabaseAdmin();
+  const supabase = getAppSupabaseAdmin();
 
   const { data, error } = await supabase
     .from("billing_webhook_events")
@@ -56,7 +56,7 @@ async function hasProcessedEvent(stripeEventId: string) {
 }
 
 async function markEventProcessed(event: Stripe.Event) {
-  const supabase = getSupabaseAdmin();
+  const supabase = getAppSupabaseAdmin();
 
   const { error } = await supabase.from("billing_webhook_events").insert({
     stripe_event_id: event.id,
@@ -70,7 +70,7 @@ async function markEventProcessed(event: Stripe.Event) {
 }
 
 async function upsertBillingAccess(row: BillingAccessRow) {
-  const supabase = getSupabaseAdmin();
+  const supabase = getAppSupabaseAdmin();
 
   const { error } = await supabase.from("billing_customer_access").upsert(row, {
     onConflict: "stripe_customer_id",
@@ -82,7 +82,7 @@ async function upsertBillingAccess(row: BillingAccessRow) {
 }
 
 async function getExistingAccessByCustomerId(stripeCustomerId: string) {
-  const supabase = getSupabaseAdmin();
+  const supabase = getAppSupabaseAdmin();
 
   const { data, error } = await supabase
     .from("billing_customer_access")
@@ -101,7 +101,9 @@ async function handleCheckoutSessionCompleted(event: Stripe.Event) {
   const session = event.data.object as Stripe.Checkout.Session;
 
   const stripeCustomerId =
-    typeof session.customer === "string" ? session.customer : session.customer?.id;
+    typeof session.customer === "string"
+      ? session.customer
+      : session.customer?.id;
 
   const stripeSubscriptionId =
     typeof session.subscription === "string"
@@ -114,14 +116,16 @@ async function handleCheckoutSessionCompleted(event: Stripe.Event) {
 
   const email =
     session.customer_details?.email ??
-    (typeof session.customer_email === "string" ? session.customer_email : null);
+    (typeof session.customer_email === "string"
+      ? session.customer_email
+      : null);
 
   const appUserId =
     typeof session.client_reference_id === "string"
       ? session.client_reference_id
       : typeof session.metadata?.user_id === "string"
-      ? session.metadata.user_id
-      : null;
+        ? session.metadata.user_id
+        : null;
 
   const existing = await getExistingAccessByCustomerId(stripeCustomerId);
 
@@ -129,7 +133,8 @@ async function handleCheckoutSessionCompleted(event: Stripe.Event) {
     user_id: appUserId ?? existing?.user_id ?? null,
     email: email ?? existing?.email ?? null,
     stripe_customer_id: stripeCustomerId,
-    stripe_subscription_id: stripeSubscriptionId ?? existing?.stripe_subscription_id ?? null,
+    stripe_subscription_id:
+      stripeSubscriptionId ?? existing?.stripe_subscription_id ?? null,
     stripe_price_id: existing?.stripe_price_id ?? null,
     stripe_product_id: existing?.stripe_product_id ?? null,
     plan_key: existing?.plan_key ?? null,
@@ -148,6 +153,7 @@ async function handleCheckoutSessionCompleted(event: Stripe.Event) {
 
 async function handleSubscriptionUpsert(event: Stripe.Event) {
   const subscription = event.data.object as Stripe.Subscription;
+
   const stripeCustomerId =
     typeof subscription.customer === "string"
       ? subscription.customer
@@ -158,49 +164,51 @@ async function handleSubscriptionUpsert(event: Stripe.Event) {
   }
 
   const firstItem = subscription.items.data[0];
-const priceId = firstItem?.price?.id ?? null;
-const productId =
-  typeof firstItem?.price?.product === "string"
-    ? firstItem.price.product
-    : firstItem?.price?.product?.id ?? null;
+  const priceId = firstItem?.price?.id ?? null;
+  const productId =
+    typeof firstItem?.price?.product === "string"
+      ? firstItem.price.product
+      : firstItem?.price?.product?.id ?? null;
+  const currentPeriodEnd = firstItem?.current_period_end ?? null;
 
-const currentPeriodEnd = firstItem?.current_period_end ?? null;
+  const planKey = getPlanKeyFromPriceId(priceId);
+  const premiumActive = Boolean(
+    planKey === "premium" && isPremiumStatus(subscription.status)
+  );
 
-const planKey = getPlanKeyFromPriceId(priceId);
-const premiumActive = Boolean(
-  planKey === "premium" && isPremiumStatus(subscription.status)
-);
+  const existing = await getExistingAccessByCustomerId(stripeCustomerId);
 
-const existing = await getExistingAccessByCustomerId(stripeCustomerId);
-
-await upsertBillingAccess({
-  user_id:
-    existing?.user_id ??
-    (typeof subscription.metadata?.user_id === "string"
-      ? subscription.metadata.user_id
-      : null),
-  email: existing?.email ?? null,
-  stripe_customer_id: stripeCustomerId,
-  stripe_subscription_id: subscription.id,
-  stripe_price_id: priceId,
-  stripe_product_id: productId,
-  plan_key: planKey,
-  subscription_status: subscription.status,
-  premium_active: premiumActive,
-  current_period_end: toIsoOrNull(currentPeriodEnd),
-  cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
-  last_event_type: event.type,
-  last_event_created: toIsoOrNull(event.created),
-  metadata: {
-    ...(existing?.metadata ?? {}),
-  },
-});
+  await upsertBillingAccess({
+    user_id:
+      existing?.user_id ??
+      (typeof subscription.metadata?.user_id === "string"
+        ? subscription.metadata.user_id
+        : null),
+    email: existing?.email ?? null,
+    stripe_customer_id: stripeCustomerId,
+    stripe_subscription_id: subscription.id,
+    stripe_price_id: priceId,
+    stripe_product_id: productId,
+    plan_key: planKey,
+    subscription_status: subscription.status,
+    premium_active: premiumActive,
+    current_period_end: toIsoOrNull(currentPeriodEnd),
+    cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
+    last_event_type: event.type,
+    last_event_created: toIsoOrNull(event.created),
+    metadata: {
+      ...(existing?.metadata ?? {}),
+    },
+  });
 }
 
 async function handleInvoicePaid(event: Stripe.Event) {
   const invoice = event.data.object as Stripe.Invoice;
+
   const stripeCustomerId =
-    typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
+    typeof invoice.customer === "string"
+      ? invoice.customer
+      : invoice.customer?.id;
 
   if (!stripeCustomerId) {
     return;
@@ -227,8 +235,11 @@ async function handleInvoicePaid(event: Stripe.Event) {
 
 async function handleInvoicePaymentFailed(event: Stripe.Event) {
   const invoice = event.data.object as Stripe.Invoice;
+
   const stripeCustomerId =
-    typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
+    typeof invoice.customer === "string"
+      ? invoice.customer
+      : invoice.customer?.id;
 
   if (!stripeCustomerId) {
     return;
@@ -270,7 +281,9 @@ export async function POST(req: Request) {
     event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Webhook signature verification failed";
+      error instanceof Error
+        ? error.message
+        : "Webhook signature verification failed";
 
     return new Response(message, { status: 400 });
   }

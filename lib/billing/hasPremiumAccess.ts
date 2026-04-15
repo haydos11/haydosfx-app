@@ -1,7 +1,7 @@
-import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { getAppSupabaseAdmin } from "@/lib/supabase/appAdmin";
 
 export async function hasPremiumAccess(userId: string) {
-  const supabase = getSupabaseAdmin();
+  const supabase = getAppSupabaseAdmin();
 
   const { data, error } = await supabase
     .from("billing_customer_access")

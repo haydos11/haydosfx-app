@@ -1,4 +1,4 @@
-import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { getAppSupabaseAdmin } from "@/lib/supabase/appAdmin";
 
 type BillingRow = {
   id: string;
@@ -36,7 +36,7 @@ function StatusPill({
 }
 
 async function getBillingRows(): Promise<BillingRow[]> {
-  const supabase = getSupabaseAdmin();
+  const supabase = getAppSupabaseAdmin();
 
   const { data, error } = await supabase
     .from("billing_customer_access")
@@ -56,7 +56,8 @@ async function getBillingRows(): Promise<BillingRow[]> {
     .order("updated_at", { ascending: false });
 
   if (error) {
-    throw new Error(`Failed loading billing records: ${error.message}`);
+    console.error("Failed loading billing records:", error.message);
+    return [];
   }
 
   return (data ?? []) as BillingRow[];
@@ -94,19 +95,28 @@ export default async function AdminBillingPage() {
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-neutral-500">
+                  <td
+                    colSpan={8}
+                    className="px-4 py-8 text-center text-neutral-500"
+                  >
                     No Stripe-synced billing records yet.
                   </td>
                 </tr>
               ) : (
                 rows.map((row) => (
-                  <tr key={row.id} className="border-b border-white/5 text-neutral-200">
+                  <tr
+                    key={row.id}
+                    className="border-b border-white/5 text-neutral-200"
+                  >
                     <td className="px-4 py-3">{row.email ?? "—"}</td>
                     <td className="px-4 py-3">{row.plan_key ?? "—"}</td>
                     <td className="px-4 py-3">
                       {row.subscription_status ? (
                         <StatusPill
-                          active={row.subscription_status === "active" || row.subscription_status === "trialing"}
+                          active={
+                            row.subscription_status === "active" ||
+                            row.subscription_status === "trialing"
+                          }
                           label={row.subscription_status}
                         />
                       ) : (
