@@ -3,28 +3,27 @@ import type { MarketInfo } from "./markets";
 
 /** A pricing source we’ll query for the report date (COT Tuesday). */
 export type PriceSource =
-  | { kind: "yahoo"; symbol: string } // e.g., "EURUSD=X", "GC=F"
-  | { kind: "fixedUSD" }; // priced directly in USD (rare)
+  | { kind: "yahoo"; symbol: string }
+  | { kind: "fixedUSD" };
 
 /** Contract spec: translate net contracts -> USD notional. */
 export type ContractSpec = {
-  /** Underlying units per futures contract (e.g., 125,000 for EUR). */
   contractSize: number;
-  /** Multiplier applied to price (e.g., cents->dollars, index multipliers). Defaults to 1. */
   priceMultiplier?: number;
-  /** Human-friendly note about the quote units. */
   quote?: string;
-  /** Price source for the underlying (front-month/spot proxy). */
   price: PriceSource;
-  /**
-   * FX symbol giving USD per underlying unit if price is not already USD-denominated.
-   * Usually undefined because we choose USD quotes above.
-   */
   fxUsdPerUnit?: PriceSource;
 };
 
 /** Map from your market key -> contract spec */
 export const CONTRACT_SPECS: Record<MarketInfo["key"], ContractSpec> = {
+  // ---------- Synthetic USD ----------
+  usd: {
+    contractSize: 1,
+    price: { kind: "fixedUSD" },
+    quote: "Synthetic USD basket; sizing handled in serving layer",
+  },
+
   // ---------- FX (CME) ----------
   eur: {
     contractSize: 125_000,
@@ -152,7 +151,7 @@ export const CONTRACT_SPECS: Record<MarketInfo["key"], ContractSpec> = {
     quote: "US cents per lb (Lean Hogs)",
   },
 
-  // ---------- Indices (Consolidated; match your markets.ts keys) ----------
+  // ---------- Indices ----------
   spx: {
     contractSize: 1,
     priceMultiplier: 250,

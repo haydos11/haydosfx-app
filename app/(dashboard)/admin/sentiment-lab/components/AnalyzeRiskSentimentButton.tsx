@@ -46,6 +46,7 @@ type AnalyzeResponse = {
 type SleeveKey =
   | "equities"
   | "fxCarry"
+  | "currencyFlows"
   | "vol"
   | "rates"
   | "commodities";
@@ -66,6 +67,35 @@ type SleeveInput = {
   laggards: string[];
 };
 
+type SessionSummaryInput = {
+  activeSession: "asia" | "london" | "newyork";
+  scores: {
+    asia: number | null;
+    london: number | null;
+    newyork: number | null;
+    day: number | null;
+  };
+  labels: {
+    asia: string;
+    london: string;
+    newyork: string;
+    day: string;
+  };
+};
+
+type CurrencyFlowSummaryInput = {
+  byCurrency: Record<string, number>;
+  betaScore: number;
+  defensiveReleaseScore: number;
+  usdScore: number;
+  overallScore: number;
+  leaders: string[];
+  laggards: string[];
+  betaLabel: "supportive" | "mixed" | "defensive";
+  defensiveLabel: "released" | "mixed" | "firm";
+  usdLabel: "soft" | "neutral" | "firm";
+};
+
 export type RiskSentimentAnalysisInput = {
   regime: string;
   score: number | null;
@@ -84,6 +114,8 @@ export type RiskSentimentAnalysisInput = {
   topSupportive: string[];
   topDefensive: string[];
   sleeves?: Record<SleeveKey, SleeveInput> | null;
+  sessionSummary?: SessionSummaryInput | null;
+  currencyFlowSummary?: CurrencyFlowSummaryInput | null;
   tapeQuality?:
     | "broad_supportive"
     | "narrow_supportive"
@@ -105,7 +137,9 @@ export type RiskSentimentAnalysisInput = {
     latest: number | null;
     hour: number | null;
     daily?: number | null;
+    asia?: number | null;
     london: number | null;
+    newyork?: number | null;
     session: number | null;
   }>;
 };
@@ -157,6 +191,17 @@ function labelTapeQuality(value: RiskSentimentAnalysisInput["tapeQuality"]) {
   }
 }
 
+function labelSessionName(value: "asia" | "london" | "newyork") {
+  switch (value) {
+    case "asia":
+      return "Asia";
+    case "london":
+      return "London";
+    case "newyork":
+      return "New York";
+  }
+}
+
 function buildRiskSentimentPrompt(input: RiskSentimentAnalysisInput) {
   const compact = {
     regime: input.regime,
@@ -165,21 +210,14 @@ function buildRiskSentimentPrompt(input: RiskSentimentAnalysisInput) {
     breadth: input.breadth,
     improving: input.improving,
     degrading: input.degrading,
-    previousScoreChange: input.previousScoreChange,
-    londonChangeScore: input.londonChangeScore,
-    sessionChangeScore: input.sessionChangeScore,
-    previousDaySameTimeScoreChange: input.previousDaySameTimeScoreChange,
-    rolling2hScoreChange: input.rolling2hScoreChange,
-    rolling4hScoreChange: input.rolling4hScoreChange,
     updatedAt: input.updatedAt,
-    summaryText: input.summaryText,
     tapeQuality: input.tapeQuality,
     tradeTranslation: input.tradeTranslation,
     bestExpressions: input.bestExpressions,
     warningFlags: input.warningFlags,
     sleeves: input.sleeves,
-    topSupportive: input.topSupportive,
-    topDefensive: input.topDefensive,
+    sessionSummary: input.sessionSummary,
+    currencyFlowSummary: input.currencyFlowSummary,
     ladderRows: input.ladderRows,
   };
 
@@ -192,11 +230,11 @@ function buildRiskSentimentPrompt(input: RiskSentimentAnalysisInput) {
     "You may infer broad implications from the direction of the assets shown.",
     "",
     "Important interpretation rules:",
-    "1. Prioritise the sleeve summaries first: equities, FX carry, vol, rates, commodities.",
-    "2. Tape quality matters more than isolated asset moves.",
-    "3. Use best expressions and warning flags when translating to trade ideas.",
-    "4. If confirmation is incomplete, say so clearly and reduce aggressiveness.",
-    "5. Focus on practical trade construction, especially FX and indices where appropriate.",
+    "1. Prioritise sleeves first: equities, FX carry, currency flows, vol, rates, commodities.",
+    "2. Use session summary next: Asia, London, New York, Day.",
+    "3. Use currencyFlowSummary to judge whether beta FX, defensive FX, and USD are confirming or conflicting.",
+    "4. Tape quality matters more than isolated asset moves.",
+    "5. If confirmation is incomplete, say so clearly and reduce aggressiveness.",
     "",
     "JSON INPUT:",
     "```json",
@@ -434,139 +472,173 @@ export default function AnalyzeRiskSentimentButton({
         className={clsx(
           "!left-auto !right-0 !top-0 !translate-x-0 !translate-y-0",
           "!h-screen !max-h-screen !w-[820px] max-md:!w-[100vw] !max-w-[820px] max-md:!max-w-[100vw]",
-          "flex flex-col overflow-hidden rounded-none border-y-0 border-r-0 border-l border-neutral-800",
+          "overflow-y-auto rounded-none border-y-0 border-r-0 border-l border-neutral-800",
           "bg-neutral-950/96 p-0 text-neutral-100 shadow-2xl backdrop-blur-xl"
         )}
       >
-        <DialogHeader className="shrink-0 border-b border-neutral-800/70 bg-[linear-gradient(180deg,rgba(18,18,22,0.96),rgba(12,12,16,0.96))] px-4 py-4 sm:px-5">
-          <div className="flex items-start justify-between gap-4">
-            <DialogTitle className="min-w-0 flex-1">
-              <div className="flex items-start gap-3">
-                <span className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20">
-                  <Sparkles className="h-4 w-4 text-fuchsia-300" />
-                </span>
+        <DialogHeader className="border-b border-neutral-800/70 bg-[linear-gradient(180deg,rgba(18,18,22,0.96),rgba(12,12,16,0.96))] px-4 py-4 sm:px-5">
+          <div className="mx-auto w-full max-w-[760px]">
+            <div className="flex items-start justify-between gap-4">
+              <DialogTitle className="min-w-0 flex-1">
+                <div className="flex items-start gap-3">
+                  <span className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20">
+                    <Sparkles className="h-4 w-4 text-fuchsia-300" />
+                  </span>
 
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate text-[18px] font-semibold text-white sm:text-[20px]">
-                      Risk Sentiment AI Brief
-                    </span>
-                    {cached !== null && (
-                      <Badge
-                        variant="outline"
-                        className={clsx(
-                          "border-neutral-700",
-                          cached
-                            ? "text-neutral-300"
-                            : "border-emerald-700/40 text-emerald-300"
-                        )}
-                      >
-                        {cached ? "From cache" : "Fresh"}
-                      </Badge>
-                    )}
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate text-[18px] font-semibold text-white sm:text-[20px]">
+                        Risk Sentiment AI Brief
+                      </span>
+                      {cached !== null && (
+                        <Badge
+                          variant="outline"
+                          className={clsx(
+                            "border-neutral-700",
+                            cached
+                              ? "text-neutral-300"
+                              : "border-emerald-700/40 text-emerald-300"
+                          )}
+                        >
+                          {cached ? "From cache" : "Fresh"}
+                        </Badge>
+                      )}
+                    </div>
+
+                    <p className="mt-1 text-sm text-neutral-400">
+                      Intraday regime, sleeves, currency flows, session flows, trade ideas, and invalidation points
+                    </p>
                   </div>
-
-                  <p className="mt-1 text-sm text-neutral-400">
-                    Intraday regime, sleeves, trade ideas, and invalidation points
-                  </p>
                 </div>
-              </div>
-            </DialogTitle>
+              </DialogTitle>
 
-            <DialogClose asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="shrink-0 text-neutral-300 hover:text-neutral-100"
-                aria-label="Close"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </DialogClose>
-          </div>
-
-          <div className="mt-4 grid gap-3 xl:grid-cols-[1.08fr_0.92fr]">
-            <div className="rounded-2xl border border-neutral-800/80 bg-neutral-900/45 p-4">
-              <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500">
-                Current read
-              </div>
-
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-white">
-                  {labelRegime(input.regime)}
-                </span>
-                <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-neutral-300">
-                  Confidence {confidenceLabel(input.confidence)}
-                </span>
-                <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-neutral-300">
-                  Tape {labelTapeQuality(input.tapeQuality)}
-                </span>
-              </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                <MetricCard label="Score" value={fmtNum(input.score)} />
-                <MetricCard
-                  label="Breadth"
-                  value={fmtPct(input.breadth != null ? input.breadth * 100 : null)}
-                />
-                <MetricCard label="Since London" value={fmtNum(input.londonChangeScore)} />
-                <MetricCard label="Last Update" value={fmtNum(input.previousScoreChange)} />
-                <MetricCard label="2h Drift" value={fmtNum(input.rolling2hScoreChange)} />
-                <MetricCard
-                  label="Updated"
-                  value={
-                    input.updatedAt
-                      ? new Date(input.updatedAt).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : "N/A"
-                  }
-                />
-              </div>
+              <DialogClose asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0 text-neutral-300 hover:text-neutral-100"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </DialogClose>
             </div>
 
-            <div className="rounded-2xl border border-neutral-800/80 bg-neutral-900/45 p-4">
-              <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-neutral-500">
-                <Activity className="h-3.5 w-3.5" />
-                Translation
-              </div>
-
-              <div className="space-y-3">
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm leading-6 text-neutral-200">
-                  {input.tradeTranslation ?? "No translation yet."}
+            <div className="mt-4 grid gap-3 xl:grid-cols-[1.08fr_0.92fr]">
+              <div className="rounded-2xl border border-neutral-800/80 bg-neutral-900/45 p-4">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500">
+                  Current read
                 </div>
 
-                <HighlightGroup
-                  icon={<TrendingUp className="h-3.5 w-3.5" />}
-                  title="Best expressions"
-                  items={input.bestExpressions ?? []}
-                  tone="positive"
-                />
-                <HighlightGroup
-                  icon={<ShieldAlert className="h-3.5 w-3.5" />}
-                  title="Warning flags"
-                  items={input.warningFlags ?? []}
-                  tone="negative"
-                />
-              </div>
-            </div>
-          </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-white">
+                    {labelRegime(input.regime)}
+                  </span>
+                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-neutral-300">
+                    Confidence {confidenceLabel(input.confidence)}
+                  </span>
+                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-neutral-300">
+                    Tape {labelTapeQuality(input.tapeQuality)}
+                  </span>
+                </div>
 
-          {!!input.sleeves && (
-            <div className="mt-3 overflow-x-auto pb-1">
-              <div className="flex min-w-[760px] gap-2">
-                {Object.values(input.sleeves).map((sleeve) => (
-                  <div key={sleeve.key} className="min-w-[148px] flex-1">
-                    <SleeveCard sleeve={sleeve} />
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <MetricCard label="Score" value={fmtNum(input.score)} />
+                  <MetricCard
+                    label="Breadth"
+                    value={fmtPct(input.breadth != null ? input.breadth * 100 : null)}
+                  />
+                  <MetricCard
+                    label="Active session"
+                    value={
+                      input.sessionSummary
+                        ? labelSessionName(input.sessionSummary.activeSession)
+                        : "N/A"
+                    }
+                  />
+                  <MetricCard label="Last Update" value={fmtNum(input.previousScoreChange)} />
+                  <MetricCard label="2h Drift" value={fmtNum(input.rolling2hScoreChange)} />
+                  <MetricCard
+                    label="Updated"
+                    value={
+                      input.updatedAt
+                        ? new Date(input.updatedAt).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
+                        : "N/A"
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-neutral-800/80 bg-neutral-900/45 p-4">
+                <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-neutral-500">
+                  <Activity className="h-3.5 w-3.5" />
+                  Translation
+                </div>
+
+                <div className="space-y-3">
+                  <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm leading-6 text-neutral-200">
+                    {input.tradeTranslation ?? "No translation yet."}
                   </div>
-                ))}
+
+                  <HighlightGroup
+                    icon={<TrendingUp className="h-3.5 w-3.5" />}
+                    title="Best expressions"
+                    items={input.bestExpressions ?? []}
+                    tone="positive"
+                  />
+                  <HighlightGroup
+                    icon={<ShieldAlert className="h-3.5 w-3.5" />}
+                    title="Warning flags"
+                    items={input.warningFlags ?? []}
+                    tone="negative"
+                  />
+                </div>
               </div>
             </div>
-          )}
+
+            {input.sessionSummary && (
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <SessionCard title="Asia" label={input.sessionSummary.labels.asia} value={fmtPct(input.sessionSummary.scores.asia)} />
+                <SessionCard title="London" label={input.sessionSummary.labels.london} value={fmtPct(input.sessionSummary.scores.london)} />
+                <SessionCard title="New York" label={input.sessionSummary.labels.newyork} value={fmtPct(input.sessionSummary.scores.newyork)} />
+                <SessionCard title="Day" label={input.sessionSummary.labels.day} value={fmtPct(input.sessionSummary.scores.day)} />
+              </div>
+            )}
+
+            {input.currencyFlowSummary && (
+              <div className="mt-3 rounded-2xl border border-neutral-800/80 bg-neutral-900/45 p-4">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500">
+                  Currency flow read
+                </div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                  <MetricCard label="Beta FX" value={input.currencyFlowSummary.betaLabel} />
+                  <MetricCard label="JPY / CHF" value={input.currencyFlowSummary.defensiveLabel} />
+                  <MetricCard label="USD" value={input.currencyFlowSummary.usdLabel} />
+                </div>
+                <div className="mt-3 text-xs text-neutral-400">
+                  Leaders: {input.currencyFlowSummary.leaders.join(", ")} · Laggards: {input.currencyFlowSummary.laggards.join(", ")}
+                </div>
+              </div>
+            )}
+
+            {!!input.sleeves && (
+              <div className="mt-3 overflow-x-auto pb-1">
+                <div className="flex min-w-[860px] gap-2">
+                  {Object.values(input.sleeves).map((sleeve) => (
+                    <div key={sleeve.key} className="min-w-[148px] flex-1">
+                      <SleeveCard sleeve={sleeve} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5 sm:py-5">
+        <div className="px-4 py-4 sm:px-5 sm:py-5">
           <div className="mx-auto w-full max-w-[680px] space-y-4">
             {busy && (
               <div className="rounded-3xl border border-neutral-800/80 bg-neutral-900/40 p-5">
@@ -604,11 +676,11 @@ export default function AnalyzeRiskSentimentButton({
           </div>
         </div>
 
-        <DialogFooter className="shrink-0 border-t border-neutral-800/70 bg-neutral-950/90 px-4 py-3 sm:px-5">
-          <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <DialogFooter className="border-t border-neutral-800/70 bg-neutral-950/90 px-4 py-3 sm:px-5">
+          <div className="mx-auto flex w-full max-w-[760px] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2 text-[11px] text-neutral-500">
               <BarChart3 className="h-3.5 w-3.5" />
-              Built from regime, sleeves, tape quality, ladder positioning, and cross-asset confirmation.
+              Built from regime, sleeves, session flows, currency flows, tape quality, and cross-asset confirmation.
             </div>
 
             <div className="flex items-center gap-2">
@@ -712,6 +784,26 @@ function SleeveCard({
       <div className="mt-2 text-xs text-neutral-300">
         Leaders: {sleeve.leaders.join(", ") || "—"}
       </div>
+    </div>
+  );
+}
+
+function SessionCard({
+  title,
+  label,
+  value,
+}: {
+  title: string;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+      <div className="text-[10px] uppercase tracking-[0.16em] text-neutral-500">
+        {title}
+      </div>
+      <div className="mt-1 text-sm font-semibold text-white">{label}</div>
+      <div className="mt-1 text-xs text-neutral-400">{value}</div>
     </div>
   );
 }

@@ -1,11 +1,32 @@
 import OpenAI from "openai";
 import type { RankedIdeaCandidate, WeeklySummaryOutput } from "./types";
+import { normalizeIdeaSymbol, type TradeDirection } from "@/lib/fx/symbols";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
 const MODEL = process.env.ANALYSIS_MODEL || "gpt-4o-mini";
+
+function normalizeCandidateIdea<T extends { symbol: string; direction: string }>(
+  idea: T
+): T {
+  const direction =
+    idea.direction === "long" || idea.direction === "short"
+      ? (idea.direction as TradeDirection)
+      : null;
+
+  if (!direction) return idea;
+
+  const normalized = normalizeIdeaSymbol(idea.symbol, direction);
+  if (!normalized) return idea;
+
+  return {
+    ...idea,
+    symbol: normalized.symbol,
+    direction: normalized.direction,
+  };
+}
 
 export async function generateWeeklySummary(params: {
   asOfDate: string;
@@ -18,6 +39,15 @@ export async function generateWeeklySummary(params: {
   }>;
   rankedCandidates: RankedIdeaCandidate[];
 }): Promise<WeeklySummaryOutput> {
+  const normalizedCandidates = (params.rankedCandidates ?? []).map((candidate) =>
+    normalizeCandidateIdea(candidate)
+  );
+
+  const promptPayload = {
+    ...params,
+    rankedCandidates: normalizedCandidates,
+  };
+
   const prompt = [
     "You are a senior macro strategist creating a weekly positioning briefing.",
     "Use only the provided JSON facts.",
@@ -49,10 +79,13 @@ export async function generateWeeklySummary(params: {
     "3. discordText should be nicely formatted for a Discord channel.",
     "4. Mention that the analysis is fresh into Tuesday and ages after Wednesday.",
     "5. Give clear reasons why the top ideas stand out.",
+    "6. For FX ideas, always use standard market pair notation.",
+    "7. If an FX pair is provided in reversed form, convert it to the conventional symbol and flip long/short direction accordingly.",
+    "8. Do not output non-standard FX symbols such as CADNZD if the conventional market symbol is NZDCAD.",
     "",
     "JSON INPUT:",
     "```json",
-    JSON.stringify(params, null, 2),
+    JSON.stringify(promptPayload, null, 2),
     "```",
   ].join("\n");
 
@@ -78,5 +111,11 @@ export async function generateWeeklySummary(params: {
     throw new Error("Weekly summary model returned empty content");
   }
 
-  return JSON.parse(text) as WeeklySummaryOutput;
+  const parsed = JSON.parse(text) as WeeklySummaryOutput;
+
+  parsed.topIdeas = (parsed.topIdeas ?? []).map((idea) =>
+    normalizeCandidateIdea(idea)
+  );
+
+  return parsed;
 }

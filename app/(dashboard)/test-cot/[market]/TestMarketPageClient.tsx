@@ -159,6 +159,11 @@ function fmtUsd(v: number | null | undefined) {
   return `${sign}$${abs.toFixed(0)}`;
 }
 
+function fmtUsdFromMillions(v: number | null | undefined) {
+  if (v == null) return "—";
+  return fmtUsd(v * 1_000_000);
+}
+
 function pillClasses(tone: "neutral" | "up" | "down" | "warn" = "neutral") {
   const map = {
     neutral: "bg-white/6 text-slate-300 ring-white/10",
@@ -231,7 +236,11 @@ function positioningShiftLabel(
   return "Neutral";
 }
 
-function reactionHelpText(isFx: boolean) {
+function reactionHelpText(isFx: boolean, isSyntheticUsd: boolean) {
+  if (isSyntheticUsd) {
+    return "For synthetic USD, Report → Release uses the stored USD basket index. Confirmation means the basket price moved in the same direction as the USD positioning shift into release. Fade means it moved against it.";
+  }
+
   if (isFx) {
     return "For FX markets, Report → Release uses the indexed underlying currency view. Confirmation means the indexed currency moved in the same direction as the positioning shift into release. Fade means it moved against it.";
   }
@@ -239,7 +248,11 @@ function reactionHelpText(isFx: boolean) {
   return "Confirmation means price moved in the same direction as the positioning shift into release. Fade means price moved against it.";
 }
 
-function reportPriceHelpText(isFx: boolean) {
+function reportPriceHelpText(isFx: boolean, isSyntheticUsd: boolean) {
+  if (isSyntheticUsd) {
+    return "For synthetic USD, displayed prices are the stored USD basket index values for report and release dates.";
+  }
+
   if (isFx) {
     return "For FX markets, displayed prices are shown as a rebased indexed view for readability. USD notional is calculated separately from real pair pricing.";
   }
@@ -247,16 +260,15 @@ function reportPriceHelpText(isFx: boolean) {
   return "For non-FX markets, this is the stored market price used for reaction analysis.";
 }
 
-function grossPositionHelpText() {
+function grossPositionHelpText(isSyntheticUsd: boolean) {
+  if (isSyntheticUsd) {
+    return "For synthetic USD, gross basket exposure is the sum of USD-bull and USD-bear basket legs, shown in USD terms rather than native futures contracts.";
+  }
   return "Gross positioning is large spec longs plus large spec shorts. It shows depth of participation even when net positioning looks small.";
 }
 
 function rangeHelpText(label: string) {
   return `${label} compares the current reading to the last 52 weeks of data visible on this page.`;
-}
-
-function participantDepthHelpText() {
-  return "Main value shows gross USD depth: (long + short) converted into USD. Lower lines show weekly net USD change, current net USD exposure, and total gross contracts.";
 }
 
 function getDisplayReportPrice(row: RecentRow, isFx: boolean) {
@@ -308,13 +320,25 @@ function reactionDisplayLabel(row: RecentRow) {
   return derived === "confirmation" ? "Confirmation" : "Fade";
 }
 
-function buildRead(latest: RecentRow | null, code: string) {
+function buildRead(latest: RecentRow | null, code: string, isSyntheticUsd: boolean) {
   if (!latest || !latest.bias) return null;
 
   const shift = latest.positioning ?? positioningShiftLabel(latest.bias, latest.d_large);
   const shiftReaction = deriveShiftAwareReaction(latest);
   const move = latest.move_pct_report_to_release;
   const moveTxt = move == null ? "—" : `${move > 0 ? "+" : ""}${move.toFixed(2)}%`;
+
+  if (isSyntheticUsd) {
+    if (shiftReaction === "confirmation") {
+      return `USD basket positioning remains ${latest.bias} (${shift}) and the indexed USD basket confirmed the positioning shift into release (${moveTxt}).`;
+    }
+
+    if (shiftReaction === "fade") {
+      return `USD basket positioning remains ${latest.bias} (${shift}) but the indexed USD basket faded the positioning shift into release (${moveTxt}).`;
+    }
+
+    return `USD basket positioning remains ${latest.bias} (${shift}). Report → Release move: ${moveTxt}.`;
+  }
 
   if (shiftReaction === "confirmation") {
     return `${code} positioning remains ${latest.bias} (${shift}) and price confirmed the positioning shift into release (${moveTxt}).`;
@@ -585,23 +609,24 @@ export default function TestMarketPageClient({
 
   const latest = data?.recent?.[0] ?? null;
   const isFx = Boolean(data?.market.isFx);
+  const isSyntheticUsd = data?.market.key === "usd";
 
   const fxDisplayBase = useMemo(() => {
-    if (!isFx || !data?.recent?.length) return null;
+    if (!isFx || !data?.recent?.length || isSyntheticUsd) return null;
     const oldestVisible = data.recent[data.recent.length - 1];
     return getDisplayReportPrice(oldestVisible, true);
-  }, [data, isFx]);
+  }, [data, isFx, isSyntheticUsd]);
 
   const latestDisplayReportPrice = latest ? getDisplayReportPrice(latest, isFx) : null;
   const latestDisplayReleasePrice = latest ? getDisplayReleasePrice(latest, isFx) : null;
 
   const latestDisplayReportPriceRebased =
-    isFx && latestDisplayReportPrice != null
+    isFx && !isSyntheticUsd && latestDisplayReportPrice != null
       ? rebaseFxDisplay(latestDisplayReportPrice, fxDisplayBase)
       : latestDisplayReportPrice;
 
   const latestDisplayReleasePriceRebased =
-    isFx && latestDisplayReleasePrice != null
+    isFx && !isSyntheticUsd && latestDisplayReleasePrice != null
       ? rebaseFxDisplay(latestDisplayReleasePrice, fxDisplayBase)
       : latestDisplayReleasePrice;
 
@@ -615,6 +640,7 @@ export default function TestMarketPageClient({
       latestLong != null && latestShort != null ? latestLong + latestShort : null;
 
     const netPctOi =
+      !isSyntheticUsd &&
       latest.open_interest != null &&
       latest.open_interest !== 0 &&
       latest.large_spec_net != null
@@ -636,8 +662,14 @@ export default function TestMarketPageClient({
       (v): v is number => v != null && Number.isFinite(v)
     );
 
-    const net52wHigh = netSeries.length ? Math.max(...netSeries) : null;
-    const net52wLow = netSeries.length ? Math.min(...netSeries) : null;
+    const net52wHigh = isSyntheticUsd
+      ? (usdSeries.length ? Math.max(...usdSeries) : null)
+      : (netSeries.length ? Math.max(...netSeries) : null);
+
+    const net52wLow = isSyntheticUsd
+      ? (usdSeries.length ? Math.min(...usdSeries) : null)
+      : (netSeries.length ? Math.min(...netSeries) : null);
+
     const usd52wHigh = usdSeries.length ? Math.max(...usdSeries) : null;
     const usd52wLow = usdSeries.length ? Math.min(...usdSeries) : null;
     const oi52wAvg = oiSeries.length
@@ -649,12 +681,16 @@ export default function TestMarketPageClient({
         ? ((latest.open_interest - oi52wAvg) / oi52wAvg) * 100
         : null;
 
+    const latestRangeValue = isSyntheticUsd
+      ? latest.large_spec_net_usd ?? null
+      : latest.large_spec_net ?? null;
+
     const netRangePct =
-      latest.large_spec_net != null &&
+      latestRangeValue != null &&
       net52wHigh != null &&
       net52wLow != null &&
       net52wHigh !== net52wLow
-        ? ((latest.large_spec_net - net52wLow) / (net52wHigh - net52wLow)) * 100
+        ? ((latestRangeValue - net52wLow) / (net52wHigh - net52wLow)) * 100
         : null;
 
     const latestLargeUsd = latest.large_spec_net_usd ?? null;
@@ -747,9 +783,9 @@ export default function TestMarketPageClient({
       notes:
         "Derived from DB-backed COT market page with speculative positioning depth, 52-week context, USD notionals, and report-to-release reaction.",
     };
-  }, [data, latest, latestDisplayReportPrice, latestDisplayReleasePrice, range, isFx]);
+  }, [data, latest, latestDisplayReportPrice, latestDisplayReleasePrice, range, isFx, isSyntheticUsd]);
 
-  const narrative = buildRead(latest, data?.market.code ?? "");
+  const narrative = buildRead(latest, data?.market.code ?? "", isSyntheticUsd);
   const latestShift = latest
     ? latest.positioning ?? positioningShiftLabel(latest.bias, latest.d_large)
     : "Neutral";
@@ -770,7 +806,9 @@ export default function TestMarketPageClient({
       grossContracts && latestNet != null ? (latestNet / grossContracts) * 100 : null;
 
     const netPctOi =
-      latestOi && latestNet != null ? (latestNet / latestOi) * 100 : null;
+      !isSyntheticUsd && latestOi && latestNet != null
+        ? (latestNet / latestOi) * 100
+        : null;
 
     const netSeries = data.large.filter((v) => Number.isFinite(v));
     const usdSeries = (data.large_usd ?? []).filter(
@@ -780,8 +818,14 @@ export default function TestMarketPageClient({
       (v): v is number => v != null && Number.isFinite(v)
     );
 
-    const net52wHigh = netSeries.length ? Math.max(...netSeries) : null;
-    const net52wLow = netSeries.length ? Math.min(...netSeries) : null;
+    const net52wHigh = isSyntheticUsd
+      ? (usdSeries.length ? Math.max(...usdSeries) : null)
+      : (netSeries.length ? Math.max(...netSeries) : null);
+
+    const net52wLow = isSyntheticUsd
+      ? (usdSeries.length ? Math.min(...usdSeries) : null)
+      : (netSeries.length ? Math.min(...netSeries) : null);
+
     const usd52wHigh = usdSeries.length ? Math.max(...usdSeries) : null;
     const usd52wLow = usdSeries.length ? Math.min(...usdSeries) : null;
     const oi52wAvg = oiSeries.length
@@ -793,12 +837,14 @@ export default function TestMarketPageClient({
         ? ((latestOi - oi52wAvg) / oi52wAvg) * 100
         : null;
 
+    const rangeValue = isSyntheticUsd ? latestUsd : latestNet;
+
     const netRangePct =
-      latestNet != null &&
+      rangeValue != null &&
       net52wHigh != null &&
       net52wLow != null &&
       net52wHigh !== net52wLow
-        ? ((latestNet - net52wLow) / (net52wHigh - net52wLow)) * 100
+        ? ((rangeValue - net52wLow) / (net52wHigh - net52wLow)) * 100
         : null;
 
     const usdRangePct =
@@ -827,7 +873,7 @@ export default function TestMarketPageClient({
       netRangePct,
       usdRangePct,
     };
-  }, [data, latest]);
+  }, [data, latest, isSyntheticUsd]);
 
   if (loading) {
     return <div className="p-4 text-sm text-slate-400">Loading…</div>;
@@ -879,11 +925,13 @@ export default function TestMarketPageClient({
               {data.market.name} ({data.market.code})
             </div>
             <div className="mt-1 text-xs text-slate-400">
-              {isFx && data.market.fx_symbol
-                ? `FX symbol: ${data.market.fx_symbol}`
-                : data.market.price_symbol
-                ? `Price symbol: ${data.market.price_symbol}`
-                : "Stored DB pricing"}
+              {isSyntheticUsd
+                ? "Synthetic basket built from EUR, JPY, GBP, AUD, NZD, CAD, and CHF COT legs"
+                : isFx && data.market.fx_symbol
+                  ? `FX symbol: ${data.market.fx_symbol}`
+                  : data.market.price_symbol
+                    ? `Price symbol: ${data.market.price_symbol}`
+                    : "Stored DB pricing"}
             </div>
           </div>
 
@@ -946,39 +994,70 @@ export default function TestMarketPageClient({
                   {latestShift}
                 </Badge>
               }
-              subvalue={<DeltaLine value={latest.d_large} formatter={fmtSignedNum} />}
+              subvalue={
+                <DeltaLine
+                  value={isSyntheticUsd ? latest.d_large_usd : latest.d_large}
+                  formatter={isSyntheticUsd ? fmtUsd : fmtSignedNum}
+                />
+              }
             />
 
             <StatCard
-              label="Net contracts"
-              value={fmtNum(derivedStats.latestNet)}
-              subvalue={`Net % OI: ${fmtPctUnsigned(derivedStats.netPctOi)}`}
-              valueClass={deltaToneClass(derivedStats.latestNet)}
+              label={isSyntheticUsd ? "Net basket USD" : "Net contracts"}
+              value={isSyntheticUsd ? fmtUsd(latest.large_spec_net_usd) : fmtNum(derivedStats.latestNet)}
+              subvalue={
+                isSyntheticUsd
+                  ? `Net % Gross: ${fmtPctUnsigned(derivedStats.netPctGross)}`
+                  : `Net % OI: ${fmtPctUnsigned(derivedStats.netPctOi)}`
+              }
+              valueClass={deltaToneClass(isSyntheticUsd ? latest.large_spec_net_usd : derivedStats.latestNet)}
             />
 
             <StatCard
-              label="Gross contracts"
-              value={fmtNum(derivedStats.grossContracts)}
+              label={isSyntheticUsd ? "Gross basket USD" : "Gross contracts"}
+              value={
+                isSyntheticUsd
+                  ? fmtUsdFromMillions(derivedStats.grossContracts)
+                  : fmtNum(derivedStats.grossContracts)
+              }
               subvalue={`Net % Gross: ${fmtPctUnsigned(derivedStats.netPctGross)}`}
-              help={grossPositionHelpText()}
+              help={grossPositionHelpText(isSyntheticUsd)}
             />
 
             <StatCard
-              label="Long contracts"
-              value={fmtNum(derivedStats.latestLong)}
-              subvalue={<DeltaLine value={latest.d_large_long} formatter={fmtSignedNum} />}
+              label={isSyntheticUsd ? "USD-bull basket" : "Long contracts"}
+              value={
+                isSyntheticUsd
+                  ? fmtUsdFromMillions(derivedStats.latestLong)
+                  : fmtNum(derivedStats.latestLong)
+              }
+              subvalue={
+                <DeltaLine
+                  value={isSyntheticUsd ? latest.d_large_long : latest.d_large_long}
+                  formatter={isSyntheticUsd ? fmtUsdFromMillions : fmtSignedNum}
+                />
+              }
             />
 
             <StatCard
-              label="Short contracts"
-              value={fmtNum(derivedStats.latestShort)}
-              subvalue={<DeltaLine value={latest.d_large_short} formatter={fmtSignedNum} />}
+              label={isSyntheticUsd ? "USD-bear basket" : "Short contracts"}
+              value={
+                isSyntheticUsd
+                  ? fmtUsdFromMillions(derivedStats.latestShort)
+                  : fmtNum(derivedStats.latestShort)
+              }
+              subvalue={
+                <DeltaLine
+                  value={isSyntheticUsd ? latest.d_large_short : latest.d_large_short}
+                  formatter={isSyntheticUsd ? fmtUsdFromMillions : fmtSignedNum}
+                />
+              }
             />
           </div>
 
           <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
             <StatCard
-              label={isFx ? "Indexed price" : "Report price"}
+              label={isSyntheticUsd ? "Indexed USD price" : isFx ? "Indexed price" : "Report price"}
               value={
                 isFx
                   ? fmtIndex(latestDisplayReportPriceRebased)
@@ -989,26 +1068,38 @@ export default function TestMarketPageClient({
                   ? `Release: ${fmtIndex(latestDisplayReleasePriceRebased)}`
                   : `Release: ${fmtPx(latestDisplayReleasePrice)}`
               }
-              help={reportPriceHelpText(isFx)}
+              help={reportPriceHelpText(isFx, isSyntheticUsd)}
             />
 
             <StatCard
-              label="Large specs USD"
-              value={fmtUsd(latest.large_spec_net_usd)}
-              subvalue={<DeltaLine value={latest.d_large_usd} formatter={fmtUsd} />}
+              label={isSyntheticUsd ? "Weekly USD delta" : "Large specs USD"}
+              value={
+                isSyntheticUsd
+                  ? fmtUsd(latest.d_large_usd)
+                  : fmtUsd(latest.large_spec_net_usd)
+              }
+              subvalue={
+                isSyntheticUsd
+                  ? `Net USD: ${fmtUsd(latest.large_spec_net_usd)}`
+                  : <DeltaLine value={latest.d_large_usd} formatter={fmtUsd} />
+              }
             />
 
             <StatCard
-              label="Open interest"
+              label={isSyntheticUsd ? "Aggregate FX OI" : "Open interest"}
               value={fmtNum(derivedStats.latestOi)}
               subvalue={`vs 52w avg: ${fmtPct(derivedStats.oiVsAvg)}`}
             />
 
             <StatCard
-              label="52w net range"
-              value={`${fmtNum(derivedStats.net52wLow)} → ${fmtNum(derivedStats.net52wHigh)}`}
+              label={isSyntheticUsd ? "52w net USD range" : "52w net range"}
+              value={
+                isSyntheticUsd
+                  ? `${fmtUsd(derivedStats.net52wLow)} → ${fmtUsd(derivedStats.net52wHigh)}`
+                  : `${fmtNum(derivedStats.net52wLow)} → ${fmtNum(derivedStats.net52wHigh)}`
+              }
               subvalue={`Current: ${fmtPctUnsigned(derivedStats.netRangePct)}`}
-              help={rangeHelpText("52w net range")}
+              help={rangeHelpText(isSyntheticUsd ? "52w net USD range" : "52w net range")}
             />
 
             <StatCard
@@ -1030,34 +1121,34 @@ export default function TestMarketPageClient({
                   </span>
                 </div>
               }
-              help={reactionHelpText(isFx)}
+              help={reactionHelpText(isFx, isSyntheticUsd)}
             />
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
             <DepthUsdCard
-  label="Small traders USD"
-  netUsd={latest.small_traders_net_usd}
-  deltaUsd={latest.d_small_usd}
-  grossUsd={latest.small_traders_gross_usd}
-  grossUsdDelta={latest.d_small_gross_usd}
-  grossUsdRoc={latest.small_gross_usd_roc_pct}
-  grossContracts={latest.small_traders_gross_contracts}
-  grossContractsDelta={latest.d_small_gross_contracts}
-  grossContractsRoc={latest.small_gross_contracts_roc_pct}
-/>
+              label="Small traders USD"
+              netUsd={latest.small_traders_net_usd}
+              deltaUsd={latest.d_small_usd}
+              grossUsd={latest.small_traders_gross_usd}
+              grossUsdDelta={latest.d_small_gross_usd}
+              grossUsdRoc={latest.small_gross_usd_roc_pct}
+              grossContracts={latest.small_traders_gross_contracts}
+              grossContractsDelta={latest.d_small_gross_contracts}
+              grossContractsRoc={latest.small_gross_contracts_roc_pct}
+            />
 
-<DepthUsdCard
-  label="Commercials USD"
-  netUsd={latest.commercials_net_usd}
-  deltaUsd={latest.d_comm_usd}
-  grossUsd={latest.commercials_gross_usd}
-  grossUsdDelta={latest.d_comm_gross_usd}
-  grossUsdRoc={latest.comm_gross_usd_roc_pct}
-  grossContracts={latest.commercials_gross_contracts}
-  grossContractsDelta={latest.d_comm_gross_contracts}
-  grossContractsRoc={latest.comm_gross_contracts_roc_pct}
-/>
+            <DepthUsdCard
+              label="Commercials USD"
+              netUsd={latest.commercials_net_usd}
+              deltaUsd={latest.d_comm_usd}
+              grossUsd={latest.commercials_gross_usd}
+              grossUsdDelta={latest.d_comm_gross_usd}
+              grossUsdRoc={latest.comm_gross_usd_roc_pct}
+              grossContracts={latest.commercials_gross_contracts}
+              grossContractsDelta={latest.d_comm_gross_contracts}
+              grossContractsRoc={latest.comm_gross_contracts_roc_pct}
+            />
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
@@ -1081,9 +1172,15 @@ export default function TestMarketPageClient({
                   : fmtPx(latestDisplayReleasePrice)}
               </span>
               <span>Direction: {latest.price_direction ?? "—"}</span>
-              <span>Gross: {fmtNum(derivedStats.grossContracts)}</span>
+              <span>
+                {isSyntheticUsd
+                  ? `Gross basket USD: ${fmtUsdFromMillions(derivedStats.grossContracts)}`
+                  : `Gross: ${fmtNum(derivedStats.grossContracts)}`}
+              </span>
               <span>Net % Gross: {fmtPctUnsigned(derivedStats.netPctGross)}</span>
-              <span>Net % OI: {fmtPctUnsigned(derivedStats.netPctOi)}</span>
+              {!isSyntheticUsd ? (
+                <span>Net % OI: {fmtPctUnsigned(derivedStats.netPctOi)}</span>
+              ) : null}
             </div>
           </div>
         </>
@@ -1104,22 +1201,30 @@ export default function TestMarketPageClient({
                 <th className="px-4 py-3 text-left font-medium min-w-[110px]">
                   Positioning
                 </th>
-                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">OI</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                  {isSyntheticUsd ? "Agg FX OI" : "OI"}
+                </th>
                 <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Small</th>
                 <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Comm</th>
-                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Large</th>
-                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Long</th>
-                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Short</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                  {isSyntheticUsd ? "Basket Net" : "Large"}
+                </th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                  {isSyntheticUsd ? "USD Bull" : "Long"}
+                </th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                  {isSyntheticUsd ? "USD Bear" : "Short"}
+                </th>
                 <th className="px-4 py-3 text-left font-medium min-w-[220px]">
                   <div className="flex items-center gap-2 whitespace-nowrap">
                     <span>Price Path</span>
-                    <TooltipInfo text={reportPriceHelpText(isFx)} />
+                    <TooltipInfo text={reportPriceHelpText(isFx, isSyntheticUsd)} />
                   </div>
                 </th>
                 <th className="px-4 py-3 text-left font-medium min-w-[220px]">
                   <div className="flex items-center gap-2 whitespace-nowrap">
                     <span>Price Move</span>
-                    <TooltipInfo text={reactionHelpText(isFx)} align="right" />
+                    <TooltipInfo text={reactionHelpText(isFx, isSyntheticUsd)} align="right" />
                   </div>
                 </th>
                 <th className="px-4 py-3 text-left font-medium whitespace-nowrap">USD</th>
@@ -1131,12 +1236,15 @@ export default function TestMarketPageClient({
                 const rawReport = getDisplayReportPrice(r, isFx);
                 const rawRelease = getDisplayReleasePrice(r, isFx);
 
-                const displayReport = isFx
-                  ? rebaseFxDisplay(rawReport, fxDisplayBase)
-                  : rawReport;
-                const displayRelease = isFx
-                  ? rebaseFxDisplay(rawRelease, fxDisplayBase)
-                  : rawRelease;
+                const displayReport =
+                  isFx && !isSyntheticUsd
+                    ? rebaseFxDisplay(rawReport, fxDisplayBase)
+                    : rawReport;
+
+                const displayRelease =
+                  isFx && !isSyntheticUsd
+                    ? rebaseFxDisplay(rawRelease, fxDisplayBase)
+                    : rawRelease;
 
                 const shiftReaction = deriveShiftAwareReaction(r);
 
@@ -1164,8 +1272,8 @@ export default function TestMarketPageClient({
                       <InlineValueWithDelta
                         value={r.small_traders_net}
                         delta={r.d_small}
-                        valueFormatter={fmtNum}
-                        deltaFormatter={fmtSignedNum}
+                        valueFormatter={isSyntheticUsd ? fmtUsdFromMillions : fmtNum}
+                        deltaFormatter={isSyntheticUsd ? fmtUsdFromMillions : fmtSignedNum}
                       />
                     </td>
 
@@ -1173,8 +1281,8 @@ export default function TestMarketPageClient({
                       <InlineValueWithDelta
                         value={r.commercials_net}
                         delta={r.d_comm}
-                        valueFormatter={fmtNum}
-                        deltaFormatter={fmtSignedNum}
+                        valueFormatter={isSyntheticUsd ? fmtUsdFromMillions : fmtNum}
+                        deltaFormatter={isSyntheticUsd ? fmtUsdFromMillions : fmtSignedNum}
                       />
                     </td>
 
@@ -1182,8 +1290,8 @@ export default function TestMarketPageClient({
                       <InlineValueWithDelta
                         value={r.large_spec_net}
                         delta={r.d_large}
-                        valueFormatter={fmtNum}
-                        deltaFormatter={fmtSignedNum}
+                        valueFormatter={isSyntheticUsd ? fmtUsdFromMillions : fmtNum}
+                        deltaFormatter={isSyntheticUsd ? fmtUsdFromMillions : fmtSignedNum}
                       />
                     </td>
 
@@ -1191,8 +1299,8 @@ export default function TestMarketPageClient({
                       <InlineValueWithDelta
                         value={r.large_spec_long}
                         delta={r.d_large_long}
-                        valueFormatter={fmtNum}
-                        deltaFormatter={fmtSignedNum}
+                        valueFormatter={isSyntheticUsd ? fmtUsdFromMillions : fmtNum}
+                        deltaFormatter={isSyntheticUsd ? fmtUsdFromMillions : fmtSignedNum}
                       />
                     </td>
 
@@ -1200,8 +1308,8 @@ export default function TestMarketPageClient({
                       <InlineValueWithDelta
                         value={r.large_spec_short}
                         delta={r.d_large_short}
-                        valueFormatter={fmtNum}
-                        deltaFormatter={fmtSignedNum}
+                        valueFormatter={isSyntheticUsd ? fmtUsdFromMillions : fmtNum}
+                        deltaFormatter={isSyntheticUsd ? fmtUsdFromMillions : fmtSignedNum}
                       />
                     </td>
 

@@ -4,6 +4,8 @@ import { resolveMarket } from "@/lib/cot/markets";
 import { requireApiPremium } from "@/lib/auth/require-api-premium";
 
 const MARKET_KEY_TO_DB_CODE: Record<string, string> = {
+  usd: "USD",
+
   eur: "6E",
   jpy: "6J",
   gbp: "6B",
@@ -37,7 +39,7 @@ const MARKET_KEY_TO_DB_CODE: Record<string, string> = {
   btc: "BTC",
 };
 
-const FX_DB_CODES = new Set(["6E", "6J", "6B", "6A", "6N", "6C", "6S", "6M"]);
+const FX_DB_CODES = new Set(["USD", "6E", "6J", "6B", "6A", "6N", "6C", "6S"]);
 
 function cutoffFor(range: string): string | null {
   const now = new Date();
@@ -178,6 +180,7 @@ export async function GET(
       );
     }
 
+    const isSyntheticUsd = info.key === "usd";
     const isFx = FX_DB_CODES.has(dbCode);
     const range = (req.nextUrl.searchParams.get("range") ?? "5y").toLowerCase();
     const startDate = cutoffFor(range);
@@ -189,8 +192,12 @@ export async function GET(
 
     const supabase = getSupabaseAdmin();
 
+    const sourceTable = isSyntheticUsd
+      ? "cot_usd_basket_history_serving"
+      : "cot_market_history_serving";
+
     let query = supabase
-      .from("cot_market_history_serving")
+      .from(sourceTable)
       .select("*")
       .eq("market_code", dbCode)
       .order("report_date", { ascending: true });
@@ -235,7 +242,11 @@ export async function GET(
     const price_direction: (string | null)[] = [];
     const reaction: (string | null)[] = [];
 
-    const price_symbol = isFx ? rows[0]?.base_ccy ?? null : dbCode;
+    const price_symbol = isSyntheticUsd
+      ? "USD"
+      : isFx
+        ? rows[0]?.base_ccy ?? null
+        : dbCode;
 
     for (const row of rows) {
       const rowDate = isoDate(row.report_date);
@@ -469,7 +480,7 @@ export async function GET(
         name: info.name,
         dbCode,
         isFx,
-        fx_symbol: isFx ? price_symbol : null,
+        fx_symbol: isSyntheticUsd ? "USD" : isFx ? price_symbol : null,
         price_symbol,
       },
       dates,

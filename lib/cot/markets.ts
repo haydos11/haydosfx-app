@@ -20,6 +20,7 @@ const REGISTRY = [
   /** ======================
    *  FX (Majors / G8+)
    *  ====================== */
+  { key: "usd", code: "USD", name: "US Dollar (Synthetic Basket)", cftcName: "US DOLLAR (SYNTHETIC BASKET)", group: "FX" },
   { key: "eur", code: "EUR", name: "Euro FX",           cftcName: "EURO FX - CHICAGO MERCANTILE EXCHANGE",                     group: "FX" },
   { key: "jpy", code: "JPY", name: "Japanese Yen",      cftcName: "JAPANESE YEN - CHICAGO MERCANTILE EXCHANGE",                group: "FX" },
   { key: "gbp", code: "GBP", name: "British Pound",     cftcName: "BRITISH POUND STERLING - CHICAGO MERCANTILE EXCHANGE",      group: "FX" },
@@ -42,7 +43,7 @@ const REGISTRY = [
   { key: "wti",    code: "CL",  name: "WTI Crude Oil",  cftcName: "CRUDE OIL, LIGHT SWEET - NEW YORK MERCANTILE EXCHANGE",     group: "ENERGY" },
   { key: "brent",  code: "BRN", name: "Brent Crude Oil",cftcName: "BRENT CRUDE OIL LAST DAY - NEW YORK MERCANTILE EXCHANGE",   group: "ENERGY" },
   { key: "rbob",   code: "RB",  name: "RBOB Gasoline",  cftcName: "GASOLINE BLENDSTOCK (RBOB) - NEW YORK MERCANTILE EXCHANGE", group: "ENERGY" },
-  { key: "ng",     code: "NG",  name: "Natural Gas",    cftcName: "NAT GAS ICE LD1 - ICE FUTURES ENERGY DIV  ",                group: "ENERGY" }, // NEW
+  { key: "ng",     code: "NG",  name: "Natural Gas",    cftcName: "NAT GAS ICE LD1 - ICE FUTURES ENERGY DIV  ",                group: "ENERGY" },
 
   /** ======================
    *  Agricultural / Livestock / Softs
@@ -53,18 +54,17 @@ const REGISTRY = [
   { key: "sugar11",code: "SB",  name: "Sugar #11",      cftcName: "SUGAR NO. 11 - ICE FUTURES U.S.",                            group: "AGRI" },
   { key: "coffee", code: "KC",  name: "Coffee",         cftcName: "COFFEE C - ICE FUTURES U.S.",                                group: "AGRI" },
   { key: "cocoa",  code: "CC",  name: "Cocoa",          cftcName: "COCOA - ICE FUTURES U.S.",                                   group: "AGRI" },
-  { key: "lc",     code: "LE",  name: "Live Cattle",    cftcName: "LIVE CATTLE - CHICAGO MERCANTILE EXCHANGE",                  group: "AGRI" }, // NEW
-  { key: "lh",     code: "HE",  name: "Lean Hogs",      cftcName: "LEAN HOGS - CHICAGO MERCANTILE EXCHANGE",                    group: "AGRI" }, // NEW
+  { key: "lc",     code: "LE",  name: "Live Cattle",    cftcName: "LIVE CATTLE - CHICAGO MERCANTILE EXCHANGE",                  group: "AGRI" },
+  { key: "lh",     code: "HE",  name: "Lean Hogs",      cftcName: "LEAN HOGS - CHICAGO MERCANTILE EXCHANGE",                    group: "AGRI" },
 
   /** ======================
    *  Index / Crypto
    *  ====================== */
-  // Switched from E-mini to FULL-SIZE S&P 500 to avoid FX/E-mini matching confusion
   { key: "spx",  code: "SPX", name: "S&P 500 (Consolidated)",     cftcName: "S&P 500 Consolidated - CHICAGO MERCANTILE EXCHANGE", group: "INDEX" },
   { key: "ndx",  code: "NDX", name: "NASDAQ-100 (Consolidated)",  cftcName: "NASDAQ-100 Consolidated - CHICAGO MERCANTILE EXCHANGE", group: "INDEX" },
   { key: "djia", code: "DJI", name: "DJIA (Consolidated)",         cftcName: "DJIA Consolidated - CHICAGO BOARD OF TRADE",          group: "INDEX" },
   { key: "btc",  code: "BTC", name: "Bitcoin CME Futures",         cftcName: "BITCOIN - CHICAGO MERCANTILE EXCHANGE",               group: "CRYPTO" },
-  ] as const satisfies ReadonlyArray<MarketInfo>;
+] as const satisfies ReadonlyArray<MarketInfo>;
 
 // —— Useful unions derived from the registry ——
 export type MarketKey  = (typeof REGISTRY)[number]["key"];
@@ -96,7 +96,7 @@ export function resolveMarket(q: string | MarketInfo | undefined | null): Market
   const byCode = MARKET_BY_CODE[raw.toUpperCase()];
   if (byCode) return byCode;
 
-  const byCftc = MARKET_BY_CFTC[raw]; // must be exact match
+  const byCftc = MARKET_BY_CFTC[raw];
   if (byCftc) return byCftc;
 
   return null;
@@ -112,8 +112,9 @@ export const MARKET_KEYS: MarketKey[] = REGISTRY.map(m => m.key);
 if (process.env.NODE_ENV !== "production") {
   const seenKey = new Set<string>(), seenCftc = new Set<string>();
   for (const m of REGISTRY) {
-    if (seenKey.has(m.key))  console.warn(`[markets] duplicate key: ${m.key}`);
+    if (seenKey.has(m.key)) console.warn(`[markets] duplicate key: ${m.key}`);
     if (seenCftc.has(m.cftcName)) console.warn(`[markets] duplicate cftcName: ${m.cftcName}`);
-    seenKey.add(m.key); seenCftc.add(m.cftcName);
+    seenKey.add(m.key);
+    seenCftc.add(m.cftcName);
   }
 }

@@ -1,11 +1,16 @@
 import crypto from "crypto";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { normalizeIdeaText, type TradeDirection } from "@/lib/fx/symbols";
 
 export const runtime = "nodejs";
 
 export const ANALYSIS_PROMPT_VERSION = "cot_snapshot_v1";
 export const DIGEST_VERSION = "cot_digest_v1";
-export const DIGEST_MODEL = process.env.COT_DIGEST_MODEL || process.env.NEWS_MODEL || "gpt-5.4-mini";
+export const DIGEST_MODEL =
+  process.env.COT_DIGEST_MODEL ||
+  process.env.NEWS_MODEL ||
+  "gpt-5.4-mini";
+
 const OPENAI_HOST = process.env.OPENAI_BASE_URL || "https://api.openai.com";
 const TIMEOUT_MS = Number(process.env.COT_DIGEST_TIMEOUT_MS ?? 60000);
 
@@ -66,7 +71,9 @@ function stableStringify(value: unknown): string {
   }
   const obj = value as Record<string, unknown>;
   const keys = Object.keys(obj).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
+  return `{${keys
+    .map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`)
+    .join(",")}}`;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -135,7 +142,9 @@ async function callOpenAI({
 
   const json = (await res.json().catch(() => null)) as OpenAIResponsesJson | null;
   if (!res.ok) {
-    throw new Error(`LLM ${res.status}: ${json ? JSON.stringify(json) : "unknown error"}`);
+    throw new Error(
+      `LLM ${res.status}: ${json ? JSON.stringify(json) : "unknown error"}`
+    );
   }
 
   const text = extractText(json ?? {});
@@ -161,7 +170,9 @@ export async function getCompletedAnalysesForDate(analysisDate: string) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("cot_analysis_cache")
-    .select("id, asset_code, asset_name, analysis_date, prompt_version, model, status, input_hash, result_text, updated_at, source")
+    .select(
+      "id, asset_code, asset_name, analysis_date, prompt_version, model, status, input_hash, result_text, updated_at, source"
+    )
     .eq("analysis_date", analysisDate)
     .eq("status", "completed")
     .eq("prompt_version", ANALYSIS_PROMPT_VERSION)
@@ -213,6 +224,59 @@ function buildDiscordText(analysisDate: string, fullText: string) {
   const header = `**Weekly FX Positioning Digest — ${analysisDate}**`;
   const body = fullText.trim();
   return `${header}\n\n${body}`;
+}
+
+function normalizeTradeIdeaLine(line: string): string {
+  const match = line.match(
+    /^(\s*[-•]\s*)(Long|Short)\s+([A-Za-z]{6})(\s+—\s+.*)?$/i
+  );
+
+  if (!match) return line;
+
+  const prefix = match[1] ?? "- ";
+  const rawSide = (match[2] ?? "").toLowerCase();
+  const rawSymbol = (match[3] ?? "").toUpperCase();
+  const suffix = match[4] ?? "";
+
+  if (rawSide !== "long" && rawSide !== "short") {
+    return line;
+  }
+
+  const normalized = normalizeIdeaText(
+    rawSymbol,
+    rawSide as TradeDirection
+  );
+
+  const side = normalized.direction === "long" ? "Long" : "Short";
+  return `${prefix}${side} ${normalized.symbol}${suffix}`;
+}
+
+function normalizeDigestTradeIdeaLines(fullText: string): string {
+  const lines = fullText.split(/\r?\n/);
+  let inTradeIdeas = false;
+
+  return lines
+    .map((line) => {
+      const trimmed = line.trim();
+
+      if (
+        /^###\s+best trade ideas/i.test(trimmed) ||
+        /^###\s+trade ideas/i.test(trimmed)
+      ) {
+        inTradeIdeas = true;
+        return line;
+      }
+
+      if (/^###\s+/i.test(trimmed)) {
+        inTradeIdeas = false;
+        return line;
+      }
+
+      if (!inTradeIdeas) return line;
+
+      return normalizeTradeIdeaLine(line);
+    })
+    .join("\n");
 }
 
 export async function generateDigest({
@@ -281,6 +345,8 @@ export async function generateDigest({
     "- Keep it sharp and institutional.",
     "- 10 to 16 bullets total.",
     "- Best trade ideas should name 3 to 5 setups using standard FX notation.",
+    "- Always use conventional market pair ordering, for example NZDCAD not CADNZD.",
+    "- If the directional idea implies the reversed market symbol, flip Long/Short accordingly.",
     "- Mention when a trade is crowded or better as relative-value rather than outright USD.",
     "- Do not use tables.",
   ].join("\n");
@@ -302,13 +368,14 @@ export async function generateDigest({
   const to = setTimeout(() => ac.abort(), TIMEOUT_MS);
 
   try {
-    const fullText = await callOpenAI({
+    const rawText = await callOpenAI({
       apiKey,
       instructions,
       input,
       signal: ac.signal,
     });
 
+    const fullText = normalizeDigestTradeIdeaLines(rawText);
     const { digestText, tradeIdeasText } = splitDigestSections(fullText);
     const discordText = buildDiscordText(dateToUse, fullText);
 
@@ -389,9 +456,9 @@ export async function postDigestToDiscord({
   forceGenerate?: boolean;
 }) {
   const webhookUrl = process.env.DISCORD_WEEKLY_WEBHOOK_URL;
-if (!webhookUrl) {
-  throw new Error("Missing DISCORD_WEEKLY_WEBHOOK_URL");
-}
+  if (!webhookUrl) {
+    throw new Error("Missing DISCORD_WEEKLY_WEBHOOK_URL");
+  }
 
   const { row } = await generateDigest({
     analysisDate,

@@ -1,5 +1,6 @@
 "use client";
 
+import RiskSentimentGauge from "./RiskSentimentGauge";
 import { useEffect, useMemo, useState } from "react";
 import AnalyzeRiskSentimentButton, {
   type RiskSentimentAnalysisInput,
@@ -44,10 +45,12 @@ type PriceRow = {
   prev_15m_change_pct: number | null;
   hour_change_pct: number | null;
   daily_change_pct?: number | null;
+  asia_change_pct?: number | null;
   rolling_2h_change_pct?: number | null;
   rolling_4h_change_pct?: number | null;
   previous_day_same_time_change_pct?: number | null;
   london_change_pct: number | null;
+  newyork_change_pct?: number | null;
   session_change_pct: number | null;
 };
 
@@ -61,6 +64,7 @@ type HistoryRow = {
 type SleeveKey =
   | "equities"
   | "fxCarry"
+  | "currencyFlows"
   | "vol"
   | "rates"
   | "commodities";
@@ -81,6 +85,48 @@ type SleeveSummary = {
   laggards: string[];
 };
 
+type SleeveHealth = {
+  key: SleeveKey;
+  label: string;
+  state: "healthy" | "partial" | "unavailable";
+  note: string;
+};
+
+type Diagnostics = {
+  feedIssues: string[];
+  marketCautions: string[];
+  sleeveHealth: Record<SleeveKey, SleeveHealth>;
+};
+
+type SessionSummary = {
+  activeSession: "asia" | "london" | "newyork";
+  scores: {
+    asia: number | null;
+    london: number | null;
+    newyork: number | null;
+    day: number | null;
+  };
+  labels: {
+    asia: string;
+    london: string;
+    newyork: string;
+    day: string;
+  };
+};
+
+type CurrencyFlowSummary = {
+  byCurrency: Record<string, number>;
+  betaScore: number;
+  defensiveReleaseScore: number;
+  usdScore: number;
+  overallScore: number;
+  leaders: string[];
+  laggards: string[];
+  betaLabel: "supportive" | "mixed" | "defensive";
+  defensiveLabel: "released" | "mixed" | "firm";
+  usdLabel: "soft" | "neutral" | "firm";
+};
+
 type Interpretation = {
   sleeves: Record<SleeveKey, SleeveSummary>;
   tapeQuality:
@@ -92,6 +138,9 @@ type Interpretation = {
   tradeTranslation: string;
   bestExpressions: string[];
   warningFlags: string[];
+  sessionSummary: SessionSummary;
+  currencyFlowSummary: CurrencyFlowSummary | null;
+  diagnostics: Diagnostics;
 };
 
 type ApiResponse = {
@@ -112,10 +161,11 @@ type LadderRow = {
   normalized: number;
   direction: "risk_on" | "risk_off" | "neutral";
   lastPrice: number | null;
-  latest: number | null;
   hour: number | null;
   daily: number | null;
+  asia: number | null;
   london: number | null;
+  newyork: number | null;
   session: number | null;
 };
 
@@ -290,10 +340,11 @@ function buildLadderRows(
       normalized,
       direction: component?.direction ?? "neutral",
       lastPrice: row.price ?? null,
-      latest: row.prev_15m_change_pct,
       hour: row.hour_change_pct,
       daily: row.daily_change_pct ?? null,
-      london: row.london_change_pct,
+      asia: row.asia_change_pct ?? null,
+      london: row.london_change_pct ?? null,
+      newyork: row.newyork_change_pct ?? null,
       session: row.session_change_pct,
     };
   });
@@ -337,6 +388,56 @@ function labelTapeQuality(value: Interpretation["tapeQuality"] | undefined) {
     default:
       return "Mixed";
   }
+}
+
+function labelSessionName(value: "asia" | "london" | "newyork") {
+  switch (value) {
+    case "asia":
+      return "Asia";
+    case "london":
+      return "London";
+    case "newyork":
+      return "New York";
+  }
+}
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function buildVisualRiskScore(snapshot: Snapshot, interpretation: Interpretation | null) {
+  const breadth = clamp((snapshot.breadth ?? 0.5) * 100, 0, 100);
+  const confidence = clamp((snapshot.confidence ?? 0.4) * 100, 0, 100);
+
+  const regimeBase =
+    snapshot.regime === "strong_risk_on"
+      ? 78
+      : snapshot.regime === "mild_risk_on"
+        ? 63
+        : snapshot.regime === "strong_risk_off"
+          ? 20
+          : snapshot.regime === "mild_risk_off"
+            ? 35
+            : 50;
+
+  const tapeAdj =
+    interpretation?.tapeQuality === "broad_supportive"
+      ? 10
+      : interpretation?.tapeQuality === "narrow_supportive"
+        ? 5
+        : interpretation?.tapeQuality === "broad_defensive"
+          ? -10
+          : interpretation?.tapeQuality === "defensive_divergence"
+            ? -6
+            : 0;
+
+  const score =
+    regimeBase * 0.52 +
+    breadth * 0.2 +
+    confidence * 0.16 +
+    clamp((snapshot.score ?? 0) * 4 + 50, 0, 100) * 0.12 +
+    tapeAdj;
+
+  return Math.round(clamp(score, 0, 100));
 }
 
 export default function RiskSentimentLab() {
@@ -389,6 +490,11 @@ export default function RiskSentimentLab() {
   }, [data?.prices, data?.snapshot?.components]);
 
   const interpretation = data?.interpretation ?? null;
+  const activeSession = interpretation?.sessionSummary?.activeSession ?? "london";
+  const visualScore = useMemo(() => {
+  if (!data?.snapshot) return 50;
+  return buildVisualRiskScore(data.snapshot, interpretation);
+}, [data?.snapshot, interpretation]);
 
   const topSupportive = useMemo(
     () => ladderRows.filter((r) => r.direction === "risk_on").slice(0, 3).map((r) => r.name),
@@ -422,6 +528,9 @@ export default function RiskSentimentLab() {
       topSupportive,
       topDefensive,
       sleeves: interpretation?.sleeves ?? null,
+      diagnostics: interpretation?.diagnostics ?? null,
+      sessionSummary: interpretation?.sessionSummary ?? null,
+      currencyFlowSummary: interpretation?.currencyFlowSummary ?? null,
       tapeQuality: interpretation?.tapeQuality ?? null,
       tradeTranslation: interpretation?.tradeTranslation ?? null,
       bestExpressions: interpretation?.bestExpressions ?? [],
@@ -434,10 +543,12 @@ export default function RiskSentimentLab() {
         score: row.score ?? null,
         normalized: row.normalized ?? null,
         lastPrice: row.lastPrice ?? null,
-        latest: row.latest ?? null,
+        latest: null,
         hour: row.hour ?? null,
         daily: row.daily ?? null,
+        asia: row.asia ?? null,
         london: row.london ?? null,
+        newyork: row.newyork ?? null,
         session: row.session ?? null,
       })),
     };
@@ -451,7 +562,7 @@ export default function RiskSentimentLab() {
             Risk Sentiment
           </h2>
           <p className="mt-1 text-sm text-slate-400">
-            Cross-asset sleeves, tape quality, and ladder detail
+            Cross-asset sleeves, sleeve health, currency flows, session flows, and ladder detail
           </p>
         </div>
 
@@ -501,16 +612,21 @@ export default function RiskSentimentLab() {
                 </div>
 
                 <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                  <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
-                    Current signal
-                  </div>
-                  <p className="mt-2 text-[18px] font-semibold text-white">
-                    {summarizeMove(data.snapshot)}
-                  </p>
-                  <p className="mt-2.5 text-sm leading-7 text-slate-300">
-                    {buildMeaning(data.snapshot)}
-                  </p>
-                </div>
+  <div className="mb-3 text-[10px] uppercase tracking-[0.18em] text-slate-500">
+    Risk state
+  </div>
+
+  <RiskSentimentGauge score={visualScore} />
+
+  <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+    <p className="text-[17px] font-semibold text-white">
+      {summarizeMove(data.snapshot)}
+    </p>
+    <p className="mt-2.5 text-sm leading-7 text-slate-300">
+      {buildMeaning(data.snapshot)}
+    </p>
+  </div>
+</div>
 
                 <div className="mt-3 grid grid-cols-2 gap-2.5">
                   <SignalBox
@@ -527,8 +643,8 @@ export default function RiskSentimentLab() {
                     }
                   />
                   <SignalBox
-                    label="Breadth"
-                    value={`${Math.round(data.snapshot.breadth * 100)}%`}
+                    label="Active session"
+                    value={labelSessionName(activeSession)}
                     tone="neutral"
                   />
                   <SignalBox
@@ -541,13 +657,9 @@ export default function RiskSentimentLab() {
                     }
                   />
                   <SignalBox
-                    label="Since London"
-                    value={fmtNum(data.snapshot.london_change_score)}
-                    tone={
-                      (data.snapshot.london_change_score ?? 0) >= 0
-                        ? "positive"
-                        : "negative"
-                    }
+                    label="Breadth"
+                    value={`${Math.round(data.snapshot.breadth * 100)}%`}
+                    tone="neutral"
                   />
                 </div>
 
@@ -561,6 +673,52 @@ export default function RiskSentimentLab() {
                   </p>
                 </div>
 
+                {interpretation?.currencyFlowSummary && (
+                  <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-4">
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
+                      Currency flow read
+                    </div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                      <SignalBox
+                        label="Beta FX"
+                        value={interpretation.currencyFlowSummary.betaLabel}
+                        tone={
+                          interpretation.currencyFlowSummary.betaLabel === "supportive"
+                            ? "positive"
+                            : interpretation.currencyFlowSummary.betaLabel === "defensive"
+                              ? "negative"
+                              : "neutral"
+                        }
+                      />
+                      <SignalBox
+                        label="JPY / CHF"
+                        value={interpretation.currencyFlowSummary.defensiveLabel}
+                        tone={
+                          interpretation.currencyFlowSummary.defensiveLabel === "released"
+                            ? "positive"
+                            : interpretation.currencyFlowSummary.defensiveLabel === "firm"
+                              ? "negative"
+                              : "neutral"
+                        }
+                      />
+                      <SignalBox
+                        label="USD"
+                        value={interpretation.currencyFlowSummary.usdLabel}
+                        tone={
+                          interpretation.currencyFlowSummary.usdLabel === "soft"
+                            ? "positive"
+                            : interpretation.currencyFlowSummary.usdLabel === "firm"
+                              ? "negative"
+                              : "neutral"
+                        }
+                      />
+                    </div>
+                    <div className="mt-3 text-xs text-slate-400">
+                      Leaders: {interpretation.currencyFlowSummary.leaders.join(", ")} · Laggards: {interpretation.currencyFlowSummary.laggards.join(", ")}
+                    </div>
+                  </div>
+                )}
+
                 <div className="mt-3 grid gap-2.5 md:grid-cols-2">
                   <SummaryList
                     title="Best expressions"
@@ -568,31 +726,89 @@ export default function RiskSentimentLab() {
                     items={interpretation?.bestExpressions ?? topSupportive}
                   />
                   <SummaryList
-                    title="Warning flags"
+                    title="Market cautions"
                     tone="negative"
-                    items={interpretation?.warningFlags ?? topDefensive}
+                    items={interpretation?.diagnostics?.marketCautions ?? []}
                   />
                 </div>
+
+                {(interpretation?.diagnostics?.feedIssues?.length ?? 0) > 0 ? (
+                  <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/8 p-3">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-amber-300">
+                      Feed issues
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {interpretation?.diagnostics?.feedIssues.map((item) => (
+                        <span
+                          key={item}
+                          className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[13px] text-white"
+                        >
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
 
             <div className="space-y-4">
-              {!!interpretation?.sleeves && (
+              {!!interpretation?.sessionSummary && (
+                <div className="rounded-[20px] border border-white/10 bg-white/[0.03] p-4">
+                  <div className="mb-3">
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
+                      Session read
+                    </div>
+                    <div className="mt-1 text-sm text-slate-300">
+                      Explicit session flows instead of a single London-only reference
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+                    <SessionCard
+                      title="Asia"
+                      label={interpretation.sessionSummary.labels.asia}
+                      value={fmtPct(interpretation.sessionSummary.scores.asia)}
+                    />
+                    <SessionCard
+                      title="London"
+                      label={interpretation.sessionSummary.labels.london}
+                      value={fmtPct(interpretation.sessionSummary.scores.london)}
+                    />
+                    <SessionCard
+                      title="New York"
+                      label={interpretation.sessionSummary.labels.newyork}
+                      value={fmtPct(interpretation.sessionSummary.scores.newyork)}
+                    />
+                    <SessionCard
+                      title="Day"
+                      label={interpretation.sessionSummary.labels.day}
+                      value={fmtPct(interpretation.sessionSummary.scores.day)}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {!!interpretation?.sleeves && !!interpretation?.diagnostics?.sleeveHealth && (
                 <div className="rounded-[20px] border border-white/10 bg-white/[0.03] p-4">
                   <div className="mb-3 flex items-center justify-between gap-4">
                     <div>
                       <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
-                        Sleeve read
+                        Sleeve health
                       </div>
                       <div className="mt-1 text-sm text-slate-300">
-                        Which parts of the market are confirming or pushing back
+                        Signal state and data health shown separately
                       </div>
                     </div>
                   </div>
 
-                  <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-5">
+                  <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
                     {Object.values(interpretation.sleeves).map((sleeve) => (
-                      <SleeveCard key={sleeve.key} sleeve={sleeve} />
+                      <SleeveCard
+                        key={sleeve.key}
+                        sleeve={sleeve}
+                        health={interpretation.diagnostics.sleeveHealth[sleeve.key]}
+                      />
                     ))}
                   </div>
                 </div>
@@ -605,7 +821,7 @@ export default function RiskSentimentLab() {
                       Risk ladder
                     </div>
                     <div className="mt-1 text-sm text-slate-300">
-                      Defensive on the left, pro-risk on the right
+                      Compact ladder with thinner strip and tighter stat boxes
                     </div>
                   </div>
                   <div className="text-right text-[11px] text-slate-400">
@@ -614,12 +830,12 @@ export default function RiskSentimentLab() {
                 </div>
 
                 <div className="overflow-hidden rounded-[18px] border border-white/10 bg-black/20">
-                  <div className="grid grid-cols-[176px_minmax(0,1fr)] border-b border-white/10 bg-white/[0.03]">
+                  <div className="grid grid-cols-[190px_minmax(0,1fr)] border-b border-white/10 bg-white/[0.03]">
                     <div className="px-4 py-2 text-[10px] uppercase tracking-[0.18em] text-slate-500">
                       Asset
                     </div>
                     <div className="px-4 py-2">
-                      <div className="relative h-5">
+                      <div className="relative h-4">
                         <div className="absolute inset-y-0 left-0 w-[34%] rounded-full bg-rose-500/15" />
                         <div className="absolute inset-y-0 left-[34%] w-[32%] rounded-full bg-slate-500/10" />
                         <div className="absolute inset-y-0 right-0 w-[34%] rounded-full bg-emerald-500/15" />
@@ -631,7 +847,7 @@ export default function RiskSentimentLab() {
                           Neutral
                         </div>
                         <div className="absolute right-0 -top-[1px] text-[9px] uppercase tracking-[0.16em] text-emerald-300">
-                          Pro Risk
+                          Supportive
                         </div>
                       </div>
                     </div>
@@ -639,69 +855,69 @@ export default function RiskSentimentLab() {
 
                   <div className="divide-y divide-white/5">
                     {ladderRows.map((row) => {
-                      const showDaily = row.daily != null && !Number.isNaN(row.daily);
+                      const activeSessionValue =
+                        activeSession === "asia"
+                          ? row.asia
+                          : activeSession === "london"
+                            ? row.london
+                            : row.newyork;
 
                       return (
                         <div
                           key={row.code}
-                          className="grid grid-cols-[176px_minmax(0,1fr)] items-center"
+                          className="grid grid-cols-[190px_minmax(0,1fr)] items-center"
                         >
                           <div className="px-4 py-2.5">
                             <div className="truncate text-[13px] font-semibold leading-5 text-white">
                               {row.name}
                             </div>
                             <div className="truncate text-[10px] uppercase tracking-[0.16em] text-slate-500">
-                              {row.code} · {row.shortClass} · {fmtPrice(row.lastPrice)}
+                              {row.code} · {row.shortClass}
+                            </div>
+
+                            <div className="mt-1 flex items-center gap-2">
+                              <span className="text-[11px] text-slate-400">
+                                {fmtPrice(row.lastPrice)}
+                              </span>
+                              <span
+                                className={`h-2 w-2 rounded-full ${
+                                  row.direction === "risk_on"
+                                    ? "bg-emerald-300"
+                                    : row.direction === "risk_off"
+                                      ? "bg-rose-300"
+                                      : "bg-slate-300"
+                                }`}
+                              />
                             </div>
                           </div>
 
-                          <div className="min-w-0 px-4 py-2">
-                            <div className="grid min-w-0 items-center gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(290px,338px)]">
-                              <div className="relative h-8 rounded-full border border-white/10 bg-[linear-gradient(90deg,rgba(244,63,94,0.13)_0%,rgba(100,116,139,0.08)_50%,rgba(16,185,129,0.13)_100%)]">
-                                <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/10" />
-
-                                <div
-                                  className={`absolute top-1/2 h-[14px] w-[14px] -translate-y-1/2 rounded-full border shadow-[0_0_18px_rgba(255,255,255,0.14)] ${dotTone(
-                                    row.direction
-                                  )}`}
-                                  style={{
-                                    left: `calc(${row.normalized}% - 7px)`,
-                                  }}
-                                />
-                              </div>
-
-                              <div className="grid min-w-0 grid-cols-3 gap-1.5">
-                                <MiniValue label="15m" value={fmtPct(row.latest)} />
-                                <MiniValue label="1h" value={fmtPct(row.hour)} />
-                                <MiniValue
-                                  label={showDaily ? "Day" : "Ldn"}
-                                  value={fmtPct(showDaily ? row.daily : row.london)}
-                                />
-                              </div>
+                          <div className="min-w-0 px-4 py-2.5">
+                            <div className="relative h-[16px] rounded-full border border-white/10 bg-[linear-gradient(90deg,rgba(244,63,94,0.13)_0%,rgba(100,116,139,0.08)_50%,rgba(16,185,129,0.13)_100%)]">
+                              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/10" />
+                              <div
+                                className={`absolute top-1/2 h-[13px] w-[13px] -translate-y-1/2 rounded-full border shadow-[0_0_18px_rgba(255,255,255,0.14)] ${dotTone(
+                                  row.direction
+                                )}`}
+                                style={{
+                                  left: `calc(${row.normalized}% - 6.5px)`,
+                                }}
+                              />
                             </div>
 
-                            <div className="mt-1.5 flex items-center justify-between gap-3">
-                              <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-slate-500">
-                                <span
-                                  className={`h-2 w-2 rounded-full ${
-                                    row.direction === "risk_on"
-                                      ? "bg-emerald-300"
-                                      : row.direction === "risk_off"
-                                        ? "bg-rose-300"
-                                        : "bg-slate-300"
-                                  }`}
-                                />
-                                {row.direction === "risk_on"
-                                  ? "Supportive"
-                                  : row.direction === "risk_off"
-                                    ? "Defensive"
-                                    : "Neutral"}
-                              </span>
+                            <div className="mt-2 grid min-w-0 grid-cols-3 gap-2">
+                              <MiniValueInline label="1H" value={fmtPct(row.hour)} />
+                              <MiniValueInline
+                                label={labelSessionName(activeSession)}
+                                value={fmtPct(activeSessionValue)}
+                              />
+                              <MiniValueInline label="Day" value={fmtPct(row.daily)} />
+                            </div>
 
+                            <div className="mt-1.5 flex justify-end">
                               <span className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
                                 Session:{" "}
-                                <span className={`font-medium ${sessionTone(row.session)}`}>
-                                  {fmtPct(row.session)}
+                                <span className={`font-medium ${sessionTone(activeSessionValue)}`}>
+                                  {fmtPct(activeSessionValue)}
                                 </span>
                               </span>
                             </div>
@@ -724,8 +940,8 @@ export default function RiskSentimentLab() {
                     tone="neutral"
                   />
                   <LegendPill
-                    title="Pro Risk"
-                    description="Assets supporting growth / beta"
+                    title="Supportive"
+                    description="Assets backing growth / beta"
                     tone="positive"
                   />
                 </div>
@@ -803,7 +1019,7 @@ function SummaryList({
   );
 }
 
-function MiniValue({
+function MiniValueInline({
   label,
   value,
 }: {
@@ -811,12 +1027,14 @@ function MiniValue({
   value: string;
 }) {
   return (
-    <div className="min-w-0 rounded-xl border border-white/5 bg-black/25 px-2 py-1.5">
-      <div className="truncate text-[8px] uppercase tracking-[0.14em] text-slate-500">
-        {label}
-      </div>
-      <div className={`mt-0.5 truncate text-[12px] font-medium ${boxTone(value)}`}>
-        {value}
+    <div className="min-w-0 rounded-xl border border-white/5 bg-black/25 px-2.5 py-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-[8px] uppercase tracking-[0.14em] text-slate-500">
+          {label}
+        </span>
+        <span className={`truncate text-[12px] font-medium ${boxTone(value)}`}>
+          {value}
+        </span>
       </div>
     </div>
   );
@@ -824,8 +1042,10 @@ function MiniValue({
 
 function SleeveCard({
   sleeve,
+  health,
 }: {
   sleeve: SleeveSummary;
+  health: SleeveHealth;
 }) {
   const toneClass =
     sleeve.state === "supportive" || sleeve.state === "mild_supportive"
@@ -834,10 +1054,22 @@ function SleeveCard({
         ? "border-rose-500/20 bg-rose-500/8"
         : "border-white/10 bg-white/[0.03]";
 
+  const badgeTone =
+    health.state === "healthy"
+      ? "text-emerald-300"
+      : health.state === "partial"
+        ? "text-amber-300"
+        : "text-rose-300";
+
   return (
     <div className={`rounded-2xl border p-3 ${toneClass}`}>
-      <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
-        {sleeve.label}
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+          {sleeve.label}
+        </div>
+        <span className={`text-[10px] uppercase tracking-[0.14em] ${badgeTone}`}>
+          {health.state}
+        </span>
       </div>
       <div className="mt-1 text-sm font-semibold text-white">
         {labelSleeveState(sleeve.state)}
@@ -848,6 +1080,27 @@ function SleeveCard({
       <div className="mt-2 text-xs text-slate-300">
         Leaders: {sleeve.leaders.join(", ") || "—"}
       </div>
+      <div className="mt-2 text-[11px] leading-5 text-slate-400">{health.note}</div>
+    </div>
+  );
+}
+
+function SessionCard({
+  title,
+  label,
+  value,
+}: {
+  title: string;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+      <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+        {title}
+      </div>
+      <div className="mt-1 text-sm font-semibold text-white">{label}</div>
+      <div className="mt-1 text-xs text-slate-400">{value}</div>
     </div>
   );
 }
