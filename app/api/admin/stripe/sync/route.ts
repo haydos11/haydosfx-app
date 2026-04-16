@@ -16,6 +16,9 @@ type BillingAccessRow = {
   premium_active: boolean;
   current_period_end: string | null;
   cancel_at_period_end: boolean;
+  on_hold: boolean;
+  hold_type: string | null;
+  hold_resumes_at: string | null;
   last_event_type: string | null;
   last_event_created: string | null;
   metadata: Record<string, unknown>;
@@ -53,6 +56,21 @@ function getCustomerId(
   return typeof customer === "string" ? customer : customer.id;
 }
 
+function getHoldState(subscription: Stripe.Subscription) {
+  const pausedStatus = subscription.status === "paused";
+  const hasPauseCollection = Boolean(subscription.pause_collection);
+
+  return {
+    onHold: pausedStatus || hasPauseCollection,
+    holdType: pausedStatus
+      ? "paused"
+      : hasPauseCollection
+        ? "pause_collection"
+        : null,
+    holdResumesAt: toIsoOrNull(subscription.pause_collection?.resumes_at ?? null),
+  };
+}
+
 async function upsertBillingAccess(row: BillingAccessRow) {
   const supabase = getAppSupabaseAdmin();
 
@@ -71,6 +89,7 @@ async function syncAllSubscriptionsFromStripe() {
   let startingAfter: string | undefined;
   let processed = 0;
   let premiumCount = 0;
+  let onHoldCount = 0;
 
   while (true) {
     const page = await stripe.subscriptions.list({
@@ -97,7 +116,10 @@ async function syncAllSubscriptionsFromStripe() {
         planKey === "premium" && isPremiumStatus(subscription.status)
       );
 
+      const holdState = getHoldState(subscription);
+
       if (premiumActive) premiumCount += 1;
+      if (holdState.onHold) onHoldCount += 1;
 
       await upsertBillingAccess({
         user_id:
@@ -114,6 +136,9 @@ async function syncAllSubscriptionsFromStripe() {
         premium_active: premiumActive,
         current_period_end: toIsoOrNull(currentPeriodEnd),
         cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
+        on_hold: holdState.onHold,
+        hold_type: holdState.holdType,
+        hold_resumes_at: holdState.holdResumesAt,
         last_event_type: "admin.sync",
         last_event_created: new Date().toISOString(),
         metadata: {
@@ -139,6 +164,7 @@ async function syncAllSubscriptionsFromStripe() {
   return {
     processed,
     premiumCount,
+    onHoldCount,
   };
 }
 
@@ -150,6 +176,7 @@ export async function POST() {
       ok: true,
       processed: result.processed,
       premiumCount: result.premiumCount,
+      onHoldCount: result.onHoldCount,
     });
   } catch (error) {
     const message =

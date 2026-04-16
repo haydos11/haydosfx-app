@@ -16,6 +16,9 @@ type BillingAccessRow = {
   premium_active: boolean;
   current_period_end: string | null;
   cancel_at_period_end: boolean;
+  on_hold: boolean;
+  hold_type: string | null;
+  hold_resumes_at: string | null;
   last_event_type: string | null;
   last_event_created: string | null;
   metadata: Record<string, unknown>;
@@ -37,6 +40,21 @@ function getPlanKeyFromPriceId(priceId: string | null) {
   if (premiumPriceIds.has(priceId)) return "premium";
 
   return null;
+}
+
+function getHoldState(subscription: Stripe.Subscription) {
+  const pausedStatus = subscription.status === "paused";
+  const hasPauseCollection = Boolean(subscription.pause_collection);
+
+  return {
+    onHold: pausedStatus || hasPauseCollection,
+    holdType: pausedStatus
+      ? "paused"
+      : hasPauseCollection
+        ? "pause_collection"
+        : null,
+    holdResumesAt: toIsoOrNull(subscription.pause_collection?.resumes_at ?? null),
+  };
 }
 
 async function hasProcessedEvent(stripeEventId: string) {
@@ -142,6 +160,9 @@ async function handleCheckoutSessionCompleted(event: Stripe.Event) {
     premium_active: existing?.premium_active ?? false,
     current_period_end: existing?.current_period_end ?? null,
     cancel_at_period_end: existing?.cancel_at_period_end ?? false,
+    on_hold: existing?.on_hold ?? false,
+    hold_type: existing?.hold_type ?? null,
+    hold_resumes_at: existing?.hold_resumes_at ?? null,
     last_event_type: event.type,
     last_event_created: toIsoOrNull(event.created),
     metadata: {
@@ -175,6 +196,7 @@ async function handleSubscriptionUpsert(event: Stripe.Event) {
   const premiumActive = Boolean(
     planKey === "premium" && isPremiumStatus(subscription.status)
   );
+  const holdState = getHoldState(subscription);
 
   const existing = await getExistingAccessByCustomerId(stripeCustomerId);
 
@@ -194,6 +216,9 @@ async function handleSubscriptionUpsert(event: Stripe.Event) {
     premium_active: premiumActive,
     current_period_end: toIsoOrNull(currentPeriodEnd),
     cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
+    on_hold: holdState.onHold,
+    hold_type: holdState.holdType,
+    hold_resumes_at: holdState.holdResumesAt,
     last_event_type: event.type,
     last_event_created: toIsoOrNull(event.created),
     metadata: {

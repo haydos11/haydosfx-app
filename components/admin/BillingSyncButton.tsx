@@ -25,6 +25,7 @@ export default function BillingSyncButton() {
         ok?: boolean;
         processed?: number;
         premiumCount?: number;
+        onHoldCount?: number;
       } | null = null;
 
       try {
@@ -39,7 +40,7 @@ export default function BillingSyncButton() {
 
       setState({
         kind: "success",
-        message: `Synced ${payload?.processed ?? 0} subscriptions. Premium active: ${payload?.premiumCount ?? 0}.`,
+        message: `Synced ${payload?.processed ?? 0} subscriptions. Premium active: ${payload?.premiumCount ?? 0}. On hold: ${payload?.onHoldCount ?? 0}.`,
       });
 
       window.location.reload();

@@ -7,6 +7,7 @@ import {
   ClipboardList,
   CreditCard,
   Home,
+  LineChart,
   Waves,
 } from "lucide-react";
 import clsx from "clsx";
@@ -31,6 +32,11 @@ const items = [
     href: "/admin/cot-digest",
     label: "COT Digest",
     icon: ClipboardList,
+  },
+  {
+    href: "/test-cot",
+    label: "Test COT",
+    icon: LineChart,
   },
   {
     href: "/admin/billing",

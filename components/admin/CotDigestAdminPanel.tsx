@@ -37,7 +37,9 @@ function MarkdownBlock({ text }: { text: string }) {
             <p className="text-sm leading-7 text-neutral-200">{children}</p>
           ),
           ul: ({ children }) => (
-            <ul className="list-disc pl-5 text-sm leading-7 text-neutral-200">{children}</ul>
+            <ul className="list-disc pl-5 text-sm leading-7 text-neutral-200">
+              {children}
+            </ul>
           ),
           li: ({ children }) => <li>{children}</li>,
           strong: ({ children }) => (
@@ -51,14 +53,72 @@ function MarkdownBlock({ text }: { text: string }) {
   );
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
 export default function CotDigestAdminPanel() {
   const [analysisDate, setAnalysisDate] = React.useState("");
   const [force, setForce] = React.useState(false);
+
+  const [busyLoad, setBusyLoad] = React.useState(false);
   const [busyGenerate, setBusyGenerate] = React.useState(false);
   const [busyPost, setBusyPost] = React.useState(false);
+
   const [error, setError] = React.useState<string | null>(null);
   const [cached, setCached] = React.useState<boolean | null>(null);
   const [row, setRow] = React.useState<DigestRow | null>(null);
+  const [hasLoadedInitially, setHasLoadedInitially] = React.useState(false);
+
+  const loadDigest = React.useCallback(
+    async (dateOverride?: string) => {
+      try {
+        setBusyLoad(true);
+        setError(null);
+
+        const dateToUse = dateOverride ?? analysisDate;
+        const qs = new URLSearchParams();
+
+        if (dateToUse) {
+          qs.set("analysisDate", dateToUse);
+        }
+
+        const res = await fetch(
+          `/api/cot/generate-digest${qs.toString() ? `?${qs.toString()}` : ""}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          }
+        );
+
+        const json = (await res.json().catch(() => ({}))) as ApiResponse;
+
+        if (!json.ok || !json.row) {
+          throw new Error(json.error || "Failed to load digest");
+        }
+
+        setCached(Boolean(json.cached));
+        setRow(json.row);
+
+        if (json.row.analysis_date) {
+          setAnalysisDate(json.row.analysis_date);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load digest");
+      } finally {
+        setBusyLoad(false);
+        setHasLoadedInitially(true);
+      }
+    },
+    [analysisDate]
+  );
+
+  React.useEffect(() => {
+    void loadDigest();
+  }, [loadDigest]);
 
   async function generateDigest() {
     try {
@@ -81,7 +141,8 @@ export default function CotDigestAdminPanel() {
 
       setCached(Boolean(json.cached));
       setRow(json.row);
-      if (!analysisDate && json.row.analysis_date) {
+
+      if (json.row.analysis_date) {
         setAnalysisDate(json.row.analysis_date);
       }
     } catch (e) {
@@ -111,7 +172,8 @@ export default function CotDigestAdminPanel() {
       }
 
       setRow(json.row);
-      if (!analysisDate && json.row.analysis_date) {
+
+      if (json.row.analysis_date) {
         setAnalysisDate(json.row.analysis_date);
       }
     } catch (e) {
@@ -122,11 +184,12 @@ export default function CotDigestAdminPanel() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8 text-neutral-100">
+    <div className="mt-6 mx-auto max-w-6xl text-neutral-100">
       <div className="mb-6">
         <h1 className="text-2xl font-semibold">COT Digest Admin</h1>
         <p className="mt-2 text-sm text-neutral-400">
-          Generate a desk summary from cached analyses, preview it, and post it to Discord.
+          Load the latest cached digest, inspect which analysis date it is based
+          on, regenerate if needed, and post to Discord.
         </p>
       </div>
 
@@ -144,7 +207,8 @@ export default function CotDigestAdminPanel() {
                 className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
               />
               <p className="mt-2 text-xs text-neutral-500">
-                Leave blank to use the latest completed cached analysis date.
+                Leave blank to load the latest available cached digest. Set a date
+                to inspect or regenerate a specific digest basis.
               </p>
             </div>
 
@@ -159,6 +223,15 @@ export default function CotDigestAdminPanel() {
             </label>
 
             <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => void loadDigest()}
+                disabled={busyLoad}
+                className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-4 py-2 text-sm font-medium text-sky-200 hover:bg-sky-500/15 disabled:opacity-50"
+              >
+                {busyLoad ? "Loading..." : "Load cached digest"}
+              </button>
+
               <button
                 type="button"
                 onClick={() => void generateDigest()}
@@ -180,7 +253,7 @@ export default function CotDigestAdminPanel() {
 
             {cached !== null && (
               <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-neutral-300">
-                Last generate result:{" "}
+                Last result:{" "}
                 <span className={cached ? "text-neutral-200" : "text-emerald-300"}>
                   {cached ? "Loaded from cache" : "Freshly generated"}
                 </span>
@@ -188,16 +261,37 @@ export default function CotDigestAdminPanel() {
             )}
 
             {row && (
-              <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-neutral-400">
-                <div>Date: {row.analysis_date}</div>
-                <div>Model: {row.model}</div>
-                <div>Rows used: {row.source_row_count}</div>
-                <div>Updated: {new Date(row.updated_at).toLocaleString()}</div>
-                <div>
-                  Discord posted:{" "}
-                  {row.posted_to_discord_at
-                    ? new Date(row.posted_to_discord_at).toLocaleString()
-                    : "No"}
+              <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-neutral-300">
+                <div className="grid gap-2">
+                  <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-neutral-500">
+                      Digest is based on analysis date
+                    </div>
+                    <div className="mt-1 text-sm font-medium text-white">
+                      {row.analysis_date || "—"}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-neutral-500">
+                      Digest last updated
+                    </div>
+                    <div className="mt-1 text-sm font-medium text-white">
+                      {formatDateTime(row.updated_at)}
+                    </div>
+                  </div>
+
+                  <div>Model: {row.model || "—"}</div>
+                  <div>Status: {row.status || "—"}</div>
+                  <div>Prompt version: {row.prompt_version || "—"}</div>
+                  <div>Digest version: {row.digest_version || "—"}</div>
+                  <div>Rows used: {row.source_row_count ?? 0}</div>
+                  <div>
+                    Discord posted:{" "}
+                    {row.posted_to_discord_at
+                      ? formatDateTime(row.posted_to_discord_at)
+                      : "No"}
+                  </div>
                 </div>
               </div>
             )}
@@ -212,22 +306,61 @@ export default function CotDigestAdminPanel() {
 
         <div className="space-y-6">
           <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-            <div className="mb-3 text-sm font-medium text-neutral-300">Digest preview</div>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="text-sm font-medium text-neutral-300">
+                Digest preview
+              </div>
+              {row ? (
+                <div className="text-xs text-neutral-500">
+                  Based on analysis date:{" "}
+                  <span className="text-neutral-300">{row.analysis_date}</span>
+                </div>
+              ) : null}
+            </div>
+
             {row?.digest_text ? (
               <MarkdownBlock text={row.digest_text} />
             ) : (
-              <div className="text-sm text-neutral-500">No digest generated yet.</div>
+              <div className="text-sm text-neutral-500">
+                {busyLoad && !hasLoadedInitially
+                  ? "Loading latest cached digest..."
+                  : "No digest available yet."}
+              </div>
             )}
           </div>
 
+          {row?.trade_ideas_text ? (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+              <div className="mb-3 text-sm font-medium text-neutral-300">
+                Trade ideas preview
+              </div>
+              <MarkdownBlock text={row.trade_ideas_text} />
+            </div>
+          ) : null}
+
           <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-            <div className="mb-3 text-sm font-medium text-neutral-300">Discord payload preview</div>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="text-sm font-medium text-neutral-300">
+                Discord payload preview
+              </div>
+              {row ? (
+                <div className="text-xs text-neutral-500">
+                  Last updated:{" "}
+                  <span className="text-neutral-300">
+                    {formatDateTime(row.updated_at)}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+
             {row?.discord_text ? (
               <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-neutral-200">
                 {row.discord_text}
               </pre>
             ) : (
-              <div className="text-sm text-neutral-500">No Discord payload yet.</div>
+              <div className="text-sm text-neutral-500">
+                No Discord payload yet.
+              </div>
             )}
           </div>
         </div>

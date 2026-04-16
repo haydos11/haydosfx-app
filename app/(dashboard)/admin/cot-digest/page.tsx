@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import CotDigestAdminPanel from "@/components/admin/CotDigestAdminPanel";
 
-export default function LegacyCotDigestAdminPage() {
-  redirect("/admin/market-research");
+export default function CotDigestAdminPage() {
+  return <CotDigestAdminPanel />;
 }
