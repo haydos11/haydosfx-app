@@ -329,7 +329,7 @@ function buildLadderRows(
   const rows = prices.map((row) => {
     const component = components[row.asset_code];
     const score = component?.score ?? 0;
-    const normalized = Math.max(0, Math.min(100, 50 + score * 25));
+    const normalized = Math.max(0, Math.min(100, 50 + score * 18));
 
     return {
       code: row.asset_code,
@@ -400,44 +400,13 @@ function labelSessionName(value: "asia" | "london" | "newyork") {
       return "New York";
   }
 }
+
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-function buildVisualRiskScore(snapshot: Snapshot, interpretation: Interpretation | null) {
-  const breadth = clamp((snapshot.breadth ?? 0.5) * 100, 0, 100);
-  const confidence = clamp((snapshot.confidence ?? 0.4) * 100, 0, 100);
-
-  const regimeBase =
-    snapshot.regime === "strong_risk_on"
-      ? 78
-      : snapshot.regime === "mild_risk_on"
-        ? 63
-        : snapshot.regime === "strong_risk_off"
-          ? 20
-          : snapshot.regime === "mild_risk_off"
-            ? 35
-            : 50;
-
-  const tapeAdj =
-    interpretation?.tapeQuality === "broad_supportive"
-      ? 10
-      : interpretation?.tapeQuality === "narrow_supportive"
-        ? 5
-        : interpretation?.tapeQuality === "broad_defensive"
-          ? -10
-          : interpretation?.tapeQuality === "defensive_divergence"
-            ? -6
-            : 0;
-
-  const score =
-    regimeBase * 0.52 +
-    breadth * 0.2 +
-    confidence * 0.16 +
-    clamp((snapshot.score ?? 0) * 4 + 50, 0, 100) * 0.12 +
-    tapeAdj;
-
-  return Math.round(clamp(score, 0, 100));
+function buildVisualRiskScore(snapshot: Snapshot) {
+  return Math.round(clamp(50 + (snapshot.score ?? 0) * 18, 0, 100));
 }
 
 export default function RiskSentimentLab() {
@@ -491,18 +460,27 @@ export default function RiskSentimentLab() {
 
   const interpretation = data?.interpretation ?? null;
   const activeSession = interpretation?.sessionSummary?.activeSession ?? "london";
+
   const visualScore = useMemo(() => {
-  if (!data?.snapshot) return 50;
-  return buildVisualRiskScore(data.snapshot, interpretation);
-}, [data?.snapshot, interpretation]);
+    if (!data?.snapshot) return 50;
+    return buildVisualRiskScore(data.snapshot);
+  }, [data?.snapshot]);
 
   const topSupportive = useMemo(
-    () => ladderRows.filter((r) => r.direction === "risk_on").slice(0, 3).map((r) => r.name),
+    () =>
+      ladderRows
+        .filter((r) => r.direction === "risk_on")
+        .slice(0, 3)
+        .map((r) => r.name),
     [ladderRows]
   );
 
   const topDefensive = useMemo(
-    () => ladderRows.filter((r) => r.direction === "risk_off").slice(0, 3).map((r) => r.name),
+    () =>
+      ladderRows
+        .filter((r) => r.direction === "risk_off")
+        .slice(0, 3)
+        .map((r) => r.name),
     [ladderRows]
   );
 
@@ -562,7 +540,8 @@ export default function RiskSentimentLab() {
             Risk Sentiment
           </h2>
           <p className="mt-1 text-sm text-slate-400">
-            Cross-asset sleeves, sleeve health, currency flows, session flows, and ladder detail
+            Cross-asset sleeves, sleeve health, currency flows, session flows,
+            and ladder detail
           </p>
         </div>
 
@@ -612,21 +591,21 @@ export default function RiskSentimentLab() {
                 </div>
 
                 <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-  <div className="mb-3 text-[10px] uppercase tracking-[0.18em] text-slate-500">
-    Risk state
-  </div>
+                  <div className="mb-3 text-[10px] uppercase tracking-[0.18em] text-slate-500">
+                    Risk state
+                  </div>
 
-  <RiskSentimentGauge score={visualScore} />
+                  <RiskSentimentGauge score={visualScore} />
 
-  <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-    <p className="text-[17px] font-semibold text-white">
-      {summarizeMove(data.snapshot)}
-    </p>
-    <p className="mt-2.5 text-sm leading-7 text-slate-300">
-      {buildMeaning(data.snapshot)}
-    </p>
-  </div>
-</div>
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+                    <p className="text-[17px] font-semibold text-white">
+                      {summarizeMove(data.snapshot)}
+                    </p>
+                    <p className="mt-2.5 text-sm leading-7 text-slate-300">
+                      {buildMeaning(data.snapshot)}
+                    </p>
+                  </div>
+                </div>
 
                 <div className="mt-3 grid grid-cols-2 gap-2.5">
                   <SignalBox
@@ -637,7 +616,8 @@ export default function RiskSentimentLab() {
                       interpretation?.tapeQuality === "narrow_supportive"
                         ? "positive"
                         : interpretation?.tapeQuality === "broad_defensive" ||
-                            interpretation?.tapeQuality === "defensive_divergence"
+                            interpretation?.tapeQuality ===
+                              "defensive_divergence"
                           ? "negative"
                           : "neutral"
                     }
@@ -683,20 +663,26 @@ export default function RiskSentimentLab() {
                         label="Beta FX"
                         value={interpretation.currencyFlowSummary.betaLabel}
                         tone={
-                          interpretation.currencyFlowSummary.betaLabel === "supportive"
+                          interpretation.currencyFlowSummary.betaLabel ===
+                          "supportive"
                             ? "positive"
-                            : interpretation.currencyFlowSummary.betaLabel === "defensive"
+                            : interpretation.currencyFlowSummary.betaLabel ===
+                                "defensive"
                               ? "negative"
                               : "neutral"
                         }
                       />
                       <SignalBox
                         label="JPY / CHF"
-                        value={interpretation.currencyFlowSummary.defensiveLabel}
+                        value={
+                          interpretation.currencyFlowSummary.defensiveLabel
+                        }
                         tone={
-                          interpretation.currencyFlowSummary.defensiveLabel === "released"
+                          interpretation.currencyFlowSummary.defensiveLabel ===
+                          "released"
                             ? "positive"
-                            : interpretation.currencyFlowSummary.defensiveLabel === "firm"
+                            : interpretation.currencyFlowSummary
+                                  .defensiveLabel === "firm"
                               ? "negative"
                               : "neutral"
                         }
@@ -707,14 +693,18 @@ export default function RiskSentimentLab() {
                         tone={
                           interpretation.currencyFlowSummary.usdLabel === "soft"
                             ? "positive"
-                            : interpretation.currencyFlowSummary.usdLabel === "firm"
+                            : interpretation.currencyFlowSummary.usdLabel ===
+                                "firm"
                               ? "negative"
                               : "neutral"
                         }
                       />
                     </div>
                     <div className="mt-3 text-xs text-slate-400">
-                      Leaders: {interpretation.currencyFlowSummary.leaders.join(", ")} · Laggards: {interpretation.currencyFlowSummary.laggards.join(", ")}
+                      Leaders:{" "}
+                      {interpretation.currencyFlowSummary.leaders.join(", ")} ·
+                      {" "}Laggards:{" "}
+                      {interpretation.currencyFlowSummary.laggards.join(", ")}
                     </div>
                   </div>
                 )}
@@ -760,7 +750,8 @@ export default function RiskSentimentLab() {
                       Session read
                     </div>
                     <div className="mt-1 text-sm text-slate-300">
-                      Explicit session flows instead of a single London-only reference
+                      Explicit session flows instead of a single London-only
+                      reference
                     </div>
                   </div>
 
@@ -773,12 +764,16 @@ export default function RiskSentimentLab() {
                     <SessionCard
                       title="London"
                       label={interpretation.sessionSummary.labels.london}
-                      value={fmtPct(interpretation.sessionSummary.scores.london)}
+                      value={fmtPct(
+                        interpretation.sessionSummary.scores.london
+                      )}
                     />
                     <SessionCard
                       title="New York"
                       label={interpretation.sessionSummary.labels.newyork}
-                      value={fmtPct(interpretation.sessionSummary.scores.newyork)}
+                      value={fmtPct(
+                        interpretation.sessionSummary.scores.newyork
+                      )}
                     />
                     <SessionCard
                       title="Day"
@@ -789,30 +784,33 @@ export default function RiskSentimentLab() {
                 </div>
               )}
 
-              {!!interpretation?.sleeves && !!interpretation?.diagnostics?.sleeveHealth && (
-                <div className="rounded-[20px] border border-white/10 bg-white/[0.03] p-4">
-                  <div className="mb-3 flex items-center justify-between gap-4">
-                    <div>
-                      <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
-                        Sleeve health
-                      </div>
-                      <div className="mt-1 text-sm text-slate-300">
-                        Signal state and data health shown separately
+              {!!interpretation?.sleeves &&
+                !!interpretation?.diagnostics?.sleeveHealth && (
+                  <div className="rounded-[20px] border border-white/10 bg-white/[0.03] p-4">
+                    <div className="mb-3 flex items-center justify-between gap-4">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
+                          Sleeve health
+                        </div>
+                        <div className="mt-1 text-sm text-slate-300">
+                          Signal state and data health shown separately
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
-                    {Object.values(interpretation.sleeves).map((sleeve) => (
-                      <SleeveCard
-                        key={sleeve.key}
-                        sleeve={sleeve}
-                        health={interpretation.diagnostics.sleeveHealth[sleeve.key]}
-                      />
-                    ))}
+                    <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+                      {Object.values(interpretation.sleeves).map((sleeve) => (
+                        <SleeveCard
+                          key={sleeve.key}
+                          sleeve={sleeve}
+                          health={
+                            interpretation.diagnostics.sleeveHealth[sleeve.key]
+                          }
+                        />
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
               <div className="rounded-[20px] border border-white/10 bg-white/[0.03] p-4">
                 <div className="mb-3 flex items-center justify-between gap-4">
@@ -905,18 +903,28 @@ export default function RiskSentimentLab() {
                             </div>
 
                             <div className="mt-2 grid min-w-0 grid-cols-3 gap-2">
-                              <MiniValueInline label="1H" value={fmtPct(row.hour)} />
+                              <MiniValueInline
+                                label="1H"
+                                value={fmtPct(row.hour)}
+                              />
                               <MiniValueInline
                                 label={labelSessionName(activeSession)}
                                 value={fmtPct(activeSessionValue)}
                               />
-                              <MiniValueInline label="Day" value={fmtPct(row.daily)} />
+                              <MiniValueInline
+                                label="Day"
+                                value={fmtPct(row.daily)}
+                              />
                             </div>
 
                             <div className="mt-1.5 flex justify-end">
                               <span className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
                                 Session:{" "}
-                                <span className={`font-medium ${sessionTone(activeSessionValue)}`}>
+                                <span
+                                  className={`font-medium ${sessionTone(
+                                    activeSessionValue
+                                  )}`}
+                                >
                                   {fmtPct(activeSessionValue)}
                                 </span>
                               </span>
@@ -975,7 +983,9 @@ function SignalBox({
       <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
         {label}
       </div>
-      <div className={`mt-1.5 text-[15px] font-semibold ${valueClass}`}>{value}</div>
+      <div className={`mt-1.5 text-[15px] font-semibold ${valueClass}`}>
+        {value}
+      </div>
     </div>
   );
 }
@@ -994,7 +1004,8 @@ function SummaryList({
       ? "border-emerald-500/20 bg-emerald-500/8"
       : "border-rose-500/20 bg-rose-500/8";
 
-  const titleClass = tone === "positive" ? "text-emerald-300" : "text-rose-300";
+  const titleClass =
+    tone === "positive" ? "text-emerald-300" : "text-rose-300";
 
   return (
     <div className={`rounded-2xl border p-3 ${wrapperClass}`}>
@@ -1080,7 +1091,9 @@ function SleeveCard({
       <div className="mt-2 text-xs text-slate-300">
         Leaders: {sleeve.leaders.join(", ") || "—"}
       </div>
-      <div className="mt-2 text-[11px] leading-5 text-slate-400">{health.note}</div>
+      <div className="mt-2 text-[11px] leading-5 text-slate-400">
+        {health.note}
+      </div>
     </div>
   );
 }

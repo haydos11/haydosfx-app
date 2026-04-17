@@ -15,13 +15,7 @@ type FetchBarsResult = {
   bars: Array<{ ts: string; price: number }>;
 };
 
-const ALLOWED_RANGES = new Set([
-  "1d",
-  "2d",
-  "5d",
-  "7d",
-  "14d",
-]);
+const ALLOWED_RANGES = new Set(["1d", "2d", "5d", "7d", "14d"]);
 
 function normalizeRange(input?: string): string {
   if (!input) return "2d";

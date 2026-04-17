@@ -204,9 +204,7 @@ function normalizedFromScore(score: number) {
   return clamp(50 + score * 18, 0, 100);
 }
 
-function classifySleeveState(
-  score: number
-): SleeveSummary["state"] {
+function classifySleeveState(score: number): SleeveSummary["state"] {
   if (score >= 1.1) return "supportive";
   if (score >= 0.35) return "mild_supportive";
   if (score <= -1.1) return "defensive";
@@ -345,25 +343,73 @@ function enrichLatestRow(latest: PriceRowRaw, series: PriceRowRaw[]): PriceRow {
     daily_change_pct: computedDaily ?? fallbackDaily,
     asia_change_pct: pctChange(latest.price, asiaBase?.price ?? null),
     london_change_pct:
-      pctChange(latest.price, londonBase?.price ?? null) ?? latest.london_change_pct ?? null,
+      pctChange(latest.price, londonBase?.price ?? null) ??
+      latest.london_change_pct ??
+      null,
     newyork_change_pct: pctChange(latest.price, newyorkBase?.price ?? null),
   };
 }
 
-function computeAssetSignal(
-  score: number,
-  row: PriceRow
-) {
-  const latest = clamp((row.prev_15m_change_pct ?? 0) / 0.35, -1, 1);
-  const hour = clamp((row.hour_change_pct ?? 0) / 0.7, -1, 1);
-  const daily = clamp((row.daily_change_pct ?? 0) / 1.6, -1, 1);
-  const activeSession =
-    getActiveSession(row.ts) === "asia"
+function riskSignForAsset(code: string): 1 | -1 {
+  switch (code) {
+    case "SPY":
+    case "QQQ":
+    case "GER40":
+    case "FRA40":
+    case "JP225":
+    case "AUDJPY":
+    case "USDJPY":
+    case "EURCHF":
+    case "COPPER":
+    case "WTI":
+      return 1;
+
+    case "VIX":
+    case "TLT":
+    case "US10Y":
+    case "US2Y":
+    case "XAUUSD":
+      return -1;
+
+    default:
+      return 1;
+  }
+}
+
+function directedPctChange(code: string, value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return null;
+  return value * riskSignForAsset(code);
+}
+
+function getActiveSessionDirectedChange(row: PriceRow) {
+  const activeSession = getActiveSession(row.ts);
+  const raw =
+    activeSession === "asia"
       ? row.asia_change_pct
-      : getActiveSession(row.ts) === "london"
+      : activeSession === "london"
         ? row.london_change_pct
         : row.newyork_change_pct;
-  const session = clamp((activeSession ?? 0) / 1.1, -1, 1);
+
+  return directedPctChange(row.asset_code, raw);
+}
+
+function computeAssetSignal(score: number, row: PriceRow) {
+  const latest = clamp(
+    (directedPctChange(row.asset_code, row.prev_15m_change_pct) ?? 0) / 0.35,
+    -1,
+    1
+  );
+  const hour = clamp(
+    (directedPctChange(row.asset_code, row.hour_change_pct) ?? 0) / 0.7,
+    -1,
+    1
+  );
+  const daily = clamp(
+    (directedPctChange(row.asset_code, row.daily_change_pct) ?? 0) / 1.6,
+    -1,
+    1
+  );
+  const session = clamp((getActiveSessionDirectedChange(row) ?? 0) / 1.1, -1, 1);
 
   return score + latest * 0.18 + hour * 0.28 + daily * 0.32 + session * 0.22;
 }
@@ -371,26 +417,26 @@ function computeAssetSignal(
 function buildSessionSummary(prices: PriceRow[]): SessionSummary {
   const activeSession = prices.length ? getActiveSession(prices[0].ts) : "asia";
 
-  const asia = mean(
-    prices
-      .filter((p) => p.asia_change_pct != null)
-      .map((p) => p.asia_change_pct ?? 0)
-  );
-  const london = mean(
-    prices
-      .filter((p) => p.london_change_pct != null)
-      .map((p) => p.london_change_pct ?? 0)
-  );
-  const newyork = mean(
-    prices
-      .filter((p) => p.newyork_change_pct != null)
-      .map((p) => p.newyork_change_pct ?? 0)
-  );
-  const day = mean(
-    prices
-      .filter((p) => p.daily_change_pct != null)
-      .map((p) => p.daily_change_pct ?? 0)
-  );
+  const asiaValues = prices
+    .map((p) => directedPctChange(p.asset_code, p.asia_change_pct))
+    .filter((v): v is number => v != null);
+
+  const londonValues = prices
+    .map((p) => directedPctChange(p.asset_code, p.london_change_pct))
+    .filter((v): v is number => v != null);
+
+  const newyorkValues = prices
+    .map((p) => directedPctChange(p.asset_code, p.newyork_change_pct))
+    .filter((v): v is number => v != null);
+
+  const dayValues = prices
+    .map((p) => directedPctChange(p.asset_code, p.daily_change_pct))
+    .filter((v): v is number => v != null);
+
+  const asia = asiaValues.length ? mean(asiaValues) : null;
+  const london = londonValues.length ? mean(londonValues) : null;
+  const newyork = newyorkValues.length ? mean(newyorkValues) : null;
+  const day = dayValues.length ? mean(dayValues) : null;
 
   function label(v: number | null) {
     if (v == null || Number.isNaN(v)) return "Mixed";
@@ -401,12 +447,7 @@ function buildSessionSummary(prices: PriceRow[]): SessionSummary {
 
   return {
     activeSession,
-    scores: {
-      asia: Number.isFinite(asia) ? asia : null,
-      london: Number.isFinite(london) ? london : null,
-      newyork: Number.isFinite(newyork) ? newyork : null,
-      day: Number.isFinite(day) ? day : null,
-    },
+    scores: { asia, london, newyork, day },
     labels: {
       asia: label(asia),
       london: label(london),
@@ -442,7 +483,7 @@ function buildInterpretation(
       codes: ["SPY", "QQQ", "GER40", "FRA40", "JP225"],
     },
     fxCarry: {
-      label: "FX Carry",
+      label: "Risk FX",
       codes: ["AUDJPY", "USDJPY", "EURCHF"],
     },
     currencyFlows: {
@@ -541,7 +582,7 @@ function buildInterpretation(
 
   const sleeveHealth: Record<SleeveKey, SleeveHealth> = {
     equities: makeHealthy("equities", "Equities", "Equity sleeve is updating normally."),
-    fxCarry: makeHealthy("fxCarry", "FX Carry", "Risk-sensitive FX crosses are available."),
+    fxCarry: makeHealthy("fxCarry", "Risk FX", "Risk-sensitive FX crosses are available."),
     currencyFlows: currencyFlowSummary
       ? makeHealthy("currencyFlows", "Currency Flows", "Intraday FX basket is available.")
       : makeUnavailable(
@@ -611,15 +652,15 @@ function buildInterpretation(
   } else if (
     supportiveSleeves.length >= 3 &&
     sleeves.equities.score > 0.35 &&
-    (sleeves.fxCarry.score > 0 || sleeves.currencyFlows.score > 0)
+    (sleeves.fxCarry.score > 0.35 || sleeves.currencyFlows.score > 0.35)
   ) {
     tapeQuality = "narrow_supportive";
   } else if (defensiveSleeves.length >= 5) {
     tapeQuality = "broad_defensive";
   } else if (
     defensiveSleeves.length >= 3 &&
-    sleeves.equities.score < 0 &&
-    sleeves.vol.score < 0
+    (sleeves.fxCarry.score < -0.35 || sleeves.currencyFlows.score < -0.35) &&
+    sleeves.equities.score < 0
   ) {
     tapeQuality = "defensive_divergence";
   }
@@ -663,7 +704,9 @@ function buildInterpretation(
       marketCautions.push(`Beta FX is ${currencyFlowSummary.betaLabel}, not fully confirming.`);
     }
     if (currencyFlowSummary.defensiveLabel !== "released") {
-      marketCautions.push(`JPY / CHF are ${currencyFlowSummary.defensiveLabel}, which makes the tape less clean.`);
+      marketCautions.push(
+        `JPY / CHF are ${currencyFlowSummary.defensiveLabel}, which makes the tape less clean.`
+      );
     }
     if (currencyFlowSummary.usdLabel === "firm") {
       marketCautions.push("USD is firm, which may conflict with clean pro-risk continuation.");

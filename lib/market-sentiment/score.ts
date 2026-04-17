@@ -10,6 +10,10 @@ function pctChange(current: number, base: number | null | undefined): number | n
   return ((current - base) / base) * 100;
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
 function nearestAtOrBefore(
   rows: Array<{ ts: string; price: number }>,
   targetMs: number
@@ -176,6 +180,30 @@ function buildSummaryText(args: {
   return parts.join(" ");
 }
 
+function normalizeMove(value: number | null | undefined, divisor: number) {
+  if (value == null || Number.isNaN(value)) return 0;
+  return clamp(value / divisor, -1, 1);
+}
+
+function blendedSignedSignal(row: IntradayPriceRow, polarity: -1 | 0 | 1) {
+  if (polarity === 0) return 0;
+
+  const latest = normalizeMove(row.prev_15m_change_pct, 0.30);
+  const hour = normalizeMove(row.hour_change_pct, 0.60);
+  const london = normalizeMove(row.london_change_pct, 1.00);
+  const session = normalizeMove(row.session_change_pct, 0.90);
+  const day = normalizeMove(row.day_change_pct, 1.40);
+
+  const blended =
+    latest * 0.12 +
+    hour * 0.22 +
+    session * 0.24 +
+    london * 0.18 +
+    day * 0.24;
+
+  return blended * polarity;
+}
+
 export function buildPriceRows(
   assetCode: string,
   assetName: string,
@@ -270,35 +298,27 @@ export function buildSnapshotRows(
       const row = latestRowAtOrBefore(sortedRowsByAsset[asset.code] ?? [], currentMs);
       if (!row) continue;
 
-      const basis =
-        row.hour_change_pct ??
-        row.prev_15m_change_pct ??
-        row.london_change_pct ??
-        row.session_change_pct ??
-        row.day_change_pct;
-
       let componentScore = 0;
       let direction: SnapshotComponent["direction"] = "neutral";
 
-      if (basis != null) {
-        if (asset.polarity === 0) {
-          // Rates are context-only for now: visible, but not directly scored.
-          componentScore = 0;
-          direction = "neutral";
-          breadthTotal += 1;
+      if (asset.polarity === 0) {
+        componentScore = 0;
+        direction = "neutral";
+      } else {
+        const signedSignal = blendedSignedSignal(row, asset.polarity);
+        componentScore = signedSignal * asset.weight;
+
+        if (componentScore > 0.12) {
+          direction = "risk_on";
+        } else if (componentScore < -0.12) {
+          direction = "risk_off";
         } else {
-          const signed = basis * asset.polarity;
+          direction = "neutral";
+        }
 
-          if (signed > 0) {
-            componentScore = asset.weight;
-            direction = "risk_on";
-            breadthAligned += 1;
-          } else if (signed < 0) {
-            componentScore = -asset.weight;
-            direction = "risk_off";
-          }
-
-          breadthTotal += 1;
+        breadthTotal += 1;
+        if (direction !== "neutral") {
+          breadthAligned += 1;
         }
       }
 
@@ -357,7 +377,7 @@ export function buildSnapshotRows(
     const improving = previousScoreChange != null ? previousScoreChange > 0 : false;
     const degrading = previousScoreChange != null ? previousScoreChange < 0 : false;
     const breadth = breadthTotal > 0 ? breadthAligned / breadthTotal : 0;
-    const confidence = Math.min(1, Math.abs(score) / 8);
+    const confidence = Math.min(1, Math.abs(score) / 6);
 
     const regime = classifyRegime(score);
     const drivers = topDrivers(components);
